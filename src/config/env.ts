@@ -9,6 +9,7 @@ const envSchema = z.object({
   DISCORD_BOT_TOKEN: z.string().min(1),
   DISCORD_APPLICATION_ID: snowflake,
   DISCORD_DEV_GUILD_ID: snowflake,
+  DATABASE_PATH: z.string().min(1).default("./data/discord-bot.sqlite"),
   NODE_ENV: z
     .enum(["development", "test", "production"])
     .default("development"),
@@ -24,3 +25,4 @@ if (!parsed.success) {
 }
 
 export const env = parsed.data;
+

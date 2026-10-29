@@ -31,9 +31,20 @@ npm run deploy:commands
 npm run dev
 ```
 
-Keep the bot running, open the test server, and follow the pull request's **Try it** steps. For the current foundation, run `/health`; it should return a private “online and responding” message. Press Ctrl+C to stop the local bot.
+Keep the bot running, open the test server, and follow the pull request's **Try it** steps. Run `/health`; it should privately report that the bot is responding and SQLite schema v1 is ready. Press Ctrl+C to stop the local bot.
 
 The PR's guild-scoped command registration updates commands in the configured test server immediately. It does not change commands in other servers. `.env` is ignored by Git and is preserved when switching commits.
+
+### Try the storage migration and restart persistence
+
+The storage foundation has no configuration-writing Discord command yet. You can exercise the same SQLite store with the local tryout command, using your test server ID and a harmless marker:
+
+```sh
+npm run storage:tryout -- write <test-server-id>
+npm run storage:tryout -- verify <test-server-id>
+```
+
+The first command writes a marker and exits; the second opens the database in a new process and confirms the value survived. For Docker Compose, run `docker compose exec bot node dist/storage/tryout.js write <test-server-id>`, restart with `docker compose restart bot`, then run `docker compose exec bot node dist/storage/tryout.js verify <test-server-id>`. The marker is stored under `storage_tryout_marker` for that test server. `/health` also reports the active SQLite schema version.
 
 To return to the merged version afterward:
 
@@ -50,3 +61,4 @@ npm run dev
 Every pull request and push to `main` runs the same local checks with `npm run check`. The workflow uses the committed lockfile and Node.js version from `.nvmrc`; it has read-only repository access and no bot or AI secrets.
 
 The current checks cover formatting, TypeScript type checking, and compilation. Feature-specific automated tests will be added with the behavior they exercise. A pull request should state what can be tried, how to trigger it, the expected result, and any required setup or permissions.
+

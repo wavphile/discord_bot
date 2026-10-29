@@ -1,11 +1,18 @@
 import { Client, Events, GatewayIntentBits, MessageFlags } from "discord.js";
 import { env } from "./config/env.js";
 import { executeHealthCommand } from "./discord/commands/health.js";
+import { logger } from "./observability/logger.js";
+import { getSchemaVersion, openDatabase } from "./storage/database.js";
 
 const client = new Client({ intents: [GatewayIntentBits.Guilds] });
+const database = openDatabase(env.DATABASE_PATH);
+const schemaVersion = getSchemaVersion(database);
+let shuttingDown = false;
 
-client.once(Events.ClientReady, (readyClient) => {
-  console.info(`Ready as ${readyClient.user.tag}`);
+logger.info("storage.ready", { schemaVersion });
+
+client.once(Events.ClientReady, () => {
+  logger.info("discord.ready", { schemaVersion });
 });
 
 client.on(Events.InteractionCreate, async (interaction) => {
@@ -13,10 +20,14 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
   try {
     if (interaction.commandName === "health") {
-      await executeHealthCommand(interaction);
+      await executeHealthCommand(interaction, schemaVersion);
     }
   } catch (error) {
-    console.error("Failed to handle interaction", error);
+    logger.error("discord.interaction.failed", error, {
+      commandName: interaction.commandName,
+      ...(interaction.guildId ? { guildId: interaction.guildId } : {}),
+      userId: interaction.user.id,
+    });
 
     const reply = {
       content: "The command could not be completed. Please try again later.",
@@ -32,10 +43,25 @@ client.on(Events.InteractionCreate, async (interaction) => {
 });
 
 client.on(Events.Error, (error) => {
-  console.error("Discord client error", error);
+  logger.error("discord.client.error", error);
 });
 
-process.once("SIGINT", () => void client.destroy());
-process.once("SIGTERM", () => void client.destroy());
+function shutdown(signal: "SIGINT" | "SIGTERM"): void {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  logger.info("process.shutdown", { signal });
+  client.destroy();
+  database.close();
+}
 
-await client.login(env.DISCORD_BOT_TOKEN);
+process.once("SIGINT", () => shutdown("SIGINT"));
+process.once("SIGTERM", () => shutdown("SIGTERM"));
+
+try {
+  await client.login(env.DISCORD_BOT_TOKEN);
+} catch (error) {
+  logger.error("discord.login.failed", error);
+  database.close();
+  process.exitCode = 1;
+}
+
