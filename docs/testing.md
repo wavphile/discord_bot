@@ -32,7 +32,7 @@ npm run deploy:commands
 npm run dev
 ```
 
-Keep the bot running, open the test server, and follow the pull request's **Try it** steps. Run `/health`; it should privately report that the bot is responding and SQLite schema v1 is ready. Press Ctrl+C to stop the local bot.
+Keep the bot running, open the test server, and follow the pull request's **Try it** steps. Run `/health`; it should privately report that the bot is responding and SQLite schema v2 is ready. Run `/server inspect`; it should privately report a snapshot ID, capture time, role/category/channel/overwrite counts, and limited channel visibility. The command stores a configuration snapshot in SQLite. It does not change server settings and is not a complete server backup. Press Ctrl+C to stop the local bot.
 
 ### Windows PowerShell helper
 
