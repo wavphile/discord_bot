@@ -85,7 +85,7 @@ Exit gate: clean checkout can be configured and run using the README; CI passes;
 | 09 | Implement permission calculations | `/permissions explain` shows why a member can view/send in a channel, including owner/admin cases, role aggregation, overwrites, and implicit restrictions |
 | 10 | Add snapshot comparison | `/server diff` identifies additions, removals, and changed supported fields between snapshots; inaccessible data is clearly marked |
 
-M1-08 server acceptance is pending the `/server inspect` smoke test after the bot account joins the test server and receives **View Channel** in `#bots`. Verify the private summary, limited-visibility notice, and persisted snapshot.
+M1-08 server acceptance passed on October 30, 2026: `/server inspect` returned a private summary and limited-visibility notice in `#bots`, and the SQLite database retained the captured snapshot after the command completed.
 
 Exit gate: compare computed permissions against Discord behavior for representative role and overwrite combinations, using a second test account.
 
