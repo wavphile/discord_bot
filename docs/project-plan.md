@@ -8,7 +8,7 @@ Build a self-hosted Discord bot that inspects server configuration, explains per
 
 Initial target: a small number of servers, one running bot instance, Discord slash commands as the interface, and hosted AI inference. Configuration analysis comes before message analysis. No dashboard, autonomous moderation, model training, or cross-server bulk rollout in the MVP.
 
-GitHub account verified through the connected GitHub plugin: **wavphile**. Repository: [`wavphile/discord_bot`](https://github.com/wavphile/discord_bot), already created and currently public and empty. Keep credentials and operational data out of Git; decide whether to retain public visibility and record the license before accepting external contributions.
+GitHub account verified through the connected GitHub plugin: **wavphile**. Repository: [`wavphile/discord_bot`](https://github.com/wavphile/discord_bot), already created and public; this plan is its first tracked file. Keep credentials and operational data out of Git; decide whether to retain public visibility and record the license before accepting external contributions.
 
 ## 2. Technical decisions
 
@@ -173,7 +173,7 @@ Defer dashboard, autonomous moderation, bulk bans/deletions, cross-server rollou
 4. Create milestones M0–M5 and issues 01–30 from the tables above.
 5. Implement issues 02–06 in dependency order and release `v0.1.0` after the M0 exit gate passes.
 
-This document is a plan. The GitHub repository exists and is currently empty; this initial plan commit starts its version history. No issues, releases, Discord application, or infrastructure have been created as part of preparing it.
+This document is a plan. The GitHub repository exists and is currently public; this plan commit starts its version history. No issues, releases, Discord application, or infrastructure have been created as part of preparing it.
 
 ## 9. Reference constraints
 
