@@ -4,11 +4,23 @@ import { z } from "zod";
 const snowflake = z
   .string()
   .regex(/^\d{17,20}$/, "must be a Discord snowflake");
+const snowflakeList = z
+  .string()
+  .default("")
+  .transform((value) =>
+    value
+      .split(",")
+      .map((id) => id.trim())
+      .filter(Boolean),
+  )
+  .pipe(z.array(snowflake));
 
 const envSchema = z.object({
   DISCORD_BOT_TOKEN: z.string().min(1),
   DISCORD_APPLICATION_ID: snowflake,
   DISCORD_DEV_GUILD_ID: snowflake,
+  DISCORD_ALLOWED_USER_IDS: snowflakeList,
+  DISCORD_ALLOWED_ROLE_IDS: snowflakeList,
   DATABASE_PATH: z.string().min(1).default("./data/discord-bot.sqlite"),
   NODE_ENV: z
     .enum(["development", "test", "production"])
