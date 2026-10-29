@@ -4,7 +4,7 @@ A self-hosted Discord bot for server configuration inspection, permission explan
 
 ## Development setup
 
-Requirements: Node.js 24.15 or newer in the 24.x line and an application created in the Discord Developer Portal. `/health` and `/server inspect` use the Guilds intent only; the initial configuration snapshot does not require the privileged Server Members intent.
+Requirements: Node.js 24.15 or newer in the 24.x line and an application created in the Discord Developer Portal. `/health` and `/server inspect` use the Guilds intent only; the initial configuration snapshot does not require the privileged Server Members intent. The bot must be a member of the test server and have **View Channel** in channels it should inspect.
 
 To try a pull request against a safe Discord test server, follow [the testing guide](docs/testing.md). Pull requests include a runnable tryout section, and GitHub Actions checks formatting, types, and the production build without Discord credentials.
 

@@ -6,7 +6,7 @@ Use a separate Discord application and a private test server for development. Ke
 
 1. Create a development application in the [Discord Developer Portal](https://discord.com/developers/applications) and add its bot user.
 2. Create a private test server that has no real members or production data.
-3. In the portal's installation settings, enable **Guild Install** and use the `bot` and `applications.commands` scopes. Start with no bot permissions; `/health` does not need to read or change server data. Install the app only into the test server.
+3. In the portal's installation settings, enable **Guild Install** and use the `bot` and `applications.commands` scopes. Install the app only into the test server. The bot account must join the server; grant it **View Channel** only in the channels to inspect. `/health` does not need bot permissions, but `/server inspect` needs the bot to access the server configuration.
 4. Copy the bot token and application ID. In Discord, enable Developer Mode, then copy the test server ID and your user ID. Copy role IDs too if you want to authorize a test role.
 5. In the repository root, copy `.env.example` to `.env` (`Copy-Item .env.example .env` in PowerShell, or `cp .env.example .env`) and fill in `DISCORD_BOT_TOKEN`, `DISCORD_APPLICATION_ID`, and `DISCORD_DEV_GUILD_ID`.
 6. Set `DISCORD_ALLOWED_USER_IDS` to your user ID and optionally `DISCORD_ALLOWED_ROLE_IDS` to comma-separated test role IDs. At least one allowlisted user or role is required; an empty allowlist denies every command. Keep the allowlist narrow and do not add `@everyone`.

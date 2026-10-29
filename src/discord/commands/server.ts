@@ -29,12 +29,23 @@ export async function executeServerCommand(
   }
 
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-  const snapshot = await captureConfigurationSnapshot(
-    client,
-    database,
-    guildId,
-    interaction.user.id,
-  );
+  let snapshot: Awaited<ReturnType<typeof captureConfigurationSnapshot>>;
+  try {
+    snapshot = await captureConfigurationSnapshot(
+      client,
+      database,
+      guildId,
+      interaction.user.id,
+    );
+  } catch (error) {
+    if (isMissingGuildAccess(error)) {
+      await interaction.editReply(
+        "The bot cannot access this server's configuration. Add the bot to the configured test server and allow it to view the channels you want to inspect, then try again.",
+      );
+      return;
+    }
+    throw error;
+  }
   const categories = snapshot.payload.channels.filter(
     (channel) => channel.type === 4,
   ).length;
@@ -53,4 +64,12 @@ export async function executeServerCommand(
       `Visibility is limited to channels returned by Discord; ${unviewable} returned channel(s) are not viewable by the bot. ` +
       "This snapshot is not a complete server backup.",
   );
+}
+
+function isMissingGuildAccess(error: unknown): boolean {
+  if (typeof error !== "object" || error === null || !("code" in error)) {
+    return false;
+  }
+
+  return error.code === 10_004 || error.code === 50_001;
 }
