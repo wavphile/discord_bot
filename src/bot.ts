@@ -20,7 +20,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
     const reply = {
       content: "The command could not be completed. Please try again later.",
-      flags: MessageFlags.Ephemeral,
+      flags: MessageFlags.Ephemeral as const,
     };
 
     if (interaction.replied || interaction.deferred) {
@@ -39,4 +39,3 @@ process.once("SIGINT", () => void client.destroy());
 process.once("SIGTERM", () => void client.destroy());
 
 await client.login(env.DISCORD_BOT_TOKEN);
-

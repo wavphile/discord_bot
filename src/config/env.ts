@@ -1,13 +1,17 @@
 import "dotenv/config";
 import { z } from "zod";
 
-const snowflake = z.string().regex(/^\d{17,20}$/, "must be a Discord snowflake");
+const snowflake = z
+  .string()
+  .regex(/^\d{17,20}$/, "must be a Discord snowflake");
 
 const envSchema = z.object({
   DISCORD_BOT_TOKEN: z.string().min(1),
   DISCORD_APPLICATION_ID: snowflake,
   DISCORD_DEV_GUILD_ID: snowflake,
-  NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
+  NODE_ENV: z
+    .enum(["development", "test", "production"])
+    .default("development"),
 });
 
 const parsed = envSchema.safeParse(process.env);
@@ -20,4 +24,3 @@ if (!parsed.success) {
 }
 
 export const env = parsed.data;
-

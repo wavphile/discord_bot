@@ -1,4 +1,8 @@
-import { MessageFlags, SlashCommandBuilder, type ChatInputCommandInteraction } from "discord.js";
+import {
+  MessageFlags,
+  SlashCommandBuilder,
+  type ChatInputCommandInteraction,
+} from "discord.js";
 
 export const healthCommand = new SlashCommandBuilder()
   .setName("health")
@@ -12,4 +16,3 @@ export async function executeHealthCommand(
     flags: MessageFlags.Ephemeral,
   });
 }
-
