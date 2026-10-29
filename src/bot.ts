@@ -1,5 +1,12 @@
-import { Client, Events, GatewayIntentBits, MessageFlags } from "discord.js";
+import {
+  Client,
+  Events,
+  GatewayIntentBits,
+  MessageFlags,
+  type BaseInteraction,
+} from "discord.js";
 import { env } from "./config/env.js";
+import { authorizeInteraction } from "./core/authorization.js";
 import { executeHealthCommand } from "./discord/commands/health.js";
 import { logger } from "./observability/logger.js";
 import { getSchemaVersion, openDatabase } from "./storage/database.js";
@@ -7,15 +14,49 @@ import { getSchemaVersion, openDatabase } from "./storage/database.js";
 const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 const database = openDatabase(env.DATABASE_PATH);
 const schemaVersion = getSchemaVersion(database);
+const authorizationPolicy = {
+  guildId: env.DISCORD_DEV_GUILD_ID,
+  allowedUserIds: new Set(env.DISCORD_ALLOWED_USER_IDS),
+  allowedRoleIds: new Set(env.DISCORD_ALLOWED_ROLE_IDS),
+};
 let shuttingDown = false;
 
 logger.info("storage.ready", { schemaVersion });
+if (
+  authorizationPolicy.allowedUserIds.size === 0 &&
+  authorizationPolicy.allowedRoleIds.size === 0
+) {
+  logger.warn("authorization.allowlist.empty");
+}
 
 client.once(Events.ClientReady, () => {
   logger.info("discord.ready", { schemaVersion });
 });
 
 client.on(Events.InteractionCreate, async (interaction) => {
+  const decision = authorizeInteraction(
+    {
+      guildId: interaction.guildId,
+      userId: interaction.user.id,
+      roleIds: interactionRoleIds(interaction),
+    },
+    authorizationPolicy,
+  );
+
+  if (!decision.allowed) {
+    logger.warn("authorization.interaction.denied", {
+      ...(interaction.guildId ? { guildId: interaction.guildId } : {}),
+      userId: interaction.user.id,
+    });
+    await denyInteraction(interaction);
+    return;
+  }
+
+  if (interaction.isAutocomplete()) {
+    await interaction.respond([]);
+    return;
+  }
+
   if (!interaction.isChatInputCommand()) return;
 
   try {
@@ -41,6 +82,26 @@ client.on(Events.InteractionCreate, async (interaction) => {
     }
   }
 });
+
+function interactionRoleIds(interaction: BaseInteraction): ReadonlySet<string> {
+  if (!interaction.inGuild() || !interaction.member) return new Set();
+
+  const roles = interaction.member.roles;
+  return "cache" in roles ? new Set(roles.cache.keys()) : new Set(roles);
+}
+
+async function denyInteraction(interaction: BaseInteraction): Promise<void> {
+  if (interaction.isAutocomplete()) {
+    await interaction.respond([]);
+    return;
+  }
+
+  if (!interaction.isRepliable()) return;
+  await interaction.reply({
+    content: "You are not authorized to use this bot here.",
+    flags: MessageFlags.Ephemeral,
+  });
+}
 
 client.on(Events.Error, (error) => {
   logger.error("discord.client.error", error);

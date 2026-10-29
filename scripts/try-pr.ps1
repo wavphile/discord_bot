@@ -59,6 +59,25 @@ function Get-DotEnvValue {
     return $value
 }
 
+function Get-SnowflakeList {
+    param(
+        [Parameter(Mandatory = $true)][string] $Value,
+        [Parameter(Mandatory = $true)][string] $Name
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Value)) {
+        return @()
+    }
+
+    $ids = @($Value.Split(",") | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+    foreach ($id in $ids) {
+        if ($id -notmatch '^\d{17,20}$') {
+            throw "Every entry in $Name must be a Discord user or role ID."
+        }
+    }
+    return $ids
+}
+
 $actualRoot = Get-GitValue @("rev-parse", "--show-toplevel")
 $actualRoot = [IO.Path]::GetFullPath($actualRoot.Replace('/', [IO.Path]::DirectorySeparatorChar))
 if (-not [string]::Equals($actualRoot, $script:RepoRoot, [StringComparison]::OrdinalIgnoreCase)) {
@@ -95,6 +114,8 @@ $envText = Get-Content -LiteralPath $envPath -Raw
 $botToken = Get-DotEnvValue -Text $envText -Name "DISCORD_BOT_TOKEN"
 $applicationId = Get-DotEnvValue -Text $envText -Name "DISCORD_APPLICATION_ID"
 $testGuildId = Get-DotEnvValue -Text $envText -Name "DISCORD_DEV_GUILD_ID"
+$allowedUserValue = Get-DotEnvValue -Text $envText -Name "DISCORD_ALLOWED_USER_IDS"
+$allowedRoleValue = Get-DotEnvValue -Text $envText -Name "DISCORD_ALLOWED_ROLE_IDS"
 $databasePath = Get-DotEnvValue -Text $envText -Name "DATABASE_PATH"
 if ([string]::IsNullOrWhiteSpace($botToken) -or $botToken -like "replace-with-*") {
     throw "Set DISCORD_BOT_TOKEN in .env to your development bot token. The token will not be printed."
@@ -104,6 +125,13 @@ if ($applicationId -notmatch '^\d{17,20}$') {
 }
 if ($testGuildId -notmatch '^\d{17,20}$') {
     throw "Set DISCORD_DEV_GUILD_ID in .env to your private test server's ID."
+}
+if ($null -eq $allowedUserValue) { $allowedUserValue = "" }
+if ($null -eq $allowedRoleValue) { $allowedRoleValue = "" }
+$allowedUserIds = @(Get-SnowflakeList -Value $allowedUserValue -Name "DISCORD_ALLOWED_USER_IDS")
+$allowedRoleIds = @(Get-SnowflakeList -Value $allowedRoleValue -Name "DISCORD_ALLOWED_ROLE_IDS")
+if ($allowedUserIds.Count -eq 0 -and $allowedRoleIds.Count -eq 0) {
+    throw "Set at least one test user ID or role ID in DISCORD_ALLOWED_USER_IDS or DISCORD_ALLOWED_ROLE_IDS in .env."
 }
 if ([string]::IsNullOrWhiteSpace($databasePath)) {
     $databasePath = "./data/discord-bot.sqlite"
@@ -128,6 +156,8 @@ if ($existingBranch) {
 Write-Host "Checked out PR #$PullRequestNumber on local branch $localBranch."
 Write-Host "Development application ID: $applicationId"
 Write-Host "Private test server ID:     $testGuildId"
+Write-Host "Allowed test users:         $($allowedUserIds.Count)"
+Write-Host "Allowed test roles:         $($allowedRoleIds.Count)"
 Write-Host "Database path:              $databasePath"
 Write-Host "Confirm these are your development app, private test server, and test database."
 
@@ -140,6 +170,8 @@ $environmentNames = @(
     "DISCORD_BOT_TOKEN",
     "DISCORD_APPLICATION_ID",
     "DISCORD_DEV_GUILD_ID",
+    "DISCORD_ALLOWED_USER_IDS",
+    "DISCORD_ALLOWED_ROLE_IDS",
     "DATABASE_PATH",
     "NODE_ENV"
 )
@@ -153,6 +185,8 @@ try {
     [Environment]::SetEnvironmentVariable("DISCORD_BOT_TOKEN", $botToken, "Process")
     [Environment]::SetEnvironmentVariable("DISCORD_APPLICATION_ID", $applicationId, "Process")
     [Environment]::SetEnvironmentVariable("DISCORD_DEV_GUILD_ID", $testGuildId, "Process")
+    [Environment]::SetEnvironmentVariable("DISCORD_ALLOWED_USER_IDS", ($allowedUserIds -join ","), "Process")
+    [Environment]::SetEnvironmentVariable("DISCORD_ALLOWED_ROLE_IDS", ($allowedRoleIds -join ","), "Process")
     [Environment]::SetEnvironmentVariable("DATABASE_PATH", $databasePath, "Process")
     [Environment]::SetEnvironmentVariable("NODE_ENV", "development", "Process")
 
