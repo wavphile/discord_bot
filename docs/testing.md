@@ -31,9 +31,43 @@ npm run deploy:commands
 npm run dev
 ```
 
-Keep the bot running, open the test server, and follow the pull request's **Try it** steps. For the current foundation, run `/health`; it should return a private “online and responding” message. Press Ctrl+C to stop the local bot.
+Keep the bot running, open the test server, and follow the pull request's **Try it** steps. Run `/health`; it should privately report that the bot is responding and SQLite schema v1 is ready. Press Ctrl+C to stop the local bot.
+
+### Windows PowerShell helper
+
+After `scripts/try-pr.ps1` is available in your checkout, run this from the repository:
+
+```powershell
+.\scripts\try-pr.ps1 -PullRequestNumber 6
+```
+
+If PowerShell blocks local scripts, run it in a one-off PowerShell process:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\try-pr.ps1 -PullRequestNumber 6
+```
+
+The helper requires a clean checkout and Node.js 24.15 or newer in the 24.x line. It creates `.env` from the example and stops if you need to fill it in. It fetches the PR's current head into a local `try/pr-<number>` branch, installs locked dependencies, shows the application and test server IDs without displaying the token, and asks you to type `DEPLOY` before registering guild-scoped commands. It then starts the bot in the foreground. Try `/health` and press Ctrl+C when finished. The helper will not overwrite a pre-existing local branch with the same name.
+
+To return to the main branch afterward:
+
+```powershell
+git switch main
+git pull --ff-only
+```
 
 The PR's guild-scoped command registration updates commands in the configured test server immediately. It does not change commands in other servers. `.env` is ignored by Git and is preserved when switching commits.
+
+### Try the storage migration and restart persistence
+
+The storage foundation has no configuration-writing Discord command yet. You can exercise the same SQLite store with the local tryout command, using your test server ID and a harmless marker:
+
+```sh
+npm run storage:tryout -- write <test-server-id>
+npm run storage:tryout -- verify <test-server-id>
+```
+
+The first command writes a marker and exits; the second opens the database in a new process and confirms the value survived. For Docker Compose, run `docker compose exec bot node dist/storage/tryout.js write <test-server-id>`, restart with `docker compose restart bot`, then run `docker compose exec bot node dist/storage/tryout.js verify <test-server-id>`. The marker is stored under `storage_tryout_marker` for that test server. `/health` also reports the active SQLite schema version.
 
 To return to the merged version afterward:
 

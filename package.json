@@ -4,11 +4,12 @@
   "private": true,
   "type": "module",
   "engines": {
-    "node": ">=24 <25"
+    "node": ">=24.15 <25"
   },
   "scripts": {
     "dev": "tsx watch src/bot.ts",
     "deploy:commands": "tsx src/deploy-commands.ts",
+    "storage:tryout": "tsx src/storage/tryout.ts",
     "start": "node dist/bot.js",
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc --noEmit -p tsconfig.json",

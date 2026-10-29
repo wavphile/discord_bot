@@ -3,6 +3,13 @@ services:
     build: .
     env_file:
       - .env
+    environment:
+      DATABASE_PATH: /app/data/discord-bot.sqlite
     restart: unless-stopped
     init: true
     stop_grace_period: 20s
+    volumes:
+      - bot-data:/app/data
+
+volumes:
+  bot-data:
