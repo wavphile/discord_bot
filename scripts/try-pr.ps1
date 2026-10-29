@@ -15,7 +15,7 @@ if ($gitCandidates.Count -eq 0) {
     throw "Git for Windows was not found. Install Git, then reopen PowerShell."
 }
 $script:GitExecutable = $gitCandidates[0].Source
-$script:RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+$script:RepoRoot = [IO.Path]::GetFullPath((Resolve-Path (Join-Path $PSScriptRoot "..")).Path)
 
 function Invoke-Git {
     param([Parameter(Mandatory = $true)][string[]] $Arguments)
@@ -60,6 +60,7 @@ function Get-DotEnvValue {
 }
 
 $actualRoot = Get-GitValue @("rev-parse", "--show-toplevel")
+$actualRoot = [IO.Path]::GetFullPath($actualRoot.Replace('/', [IO.Path]::DirectorySeparatorChar))
 if (-not [string]::Equals($actualRoot, $script:RepoRoot, [StringComparison]::OrdinalIgnoreCase)) {
     throw "The script must be inside the repository checkout."
 }
