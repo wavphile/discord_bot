@@ -66,4 +66,3 @@ export const logger = {
     write("error", event, context, error);
   },
 };
-

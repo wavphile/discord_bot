@@ -85,4 +85,3 @@ export function getSchemaVersion(database: DatabaseSync): number {
     .get() as { version: number };
   return row.version;
 }
-

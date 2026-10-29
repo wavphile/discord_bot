@@ -20,4 +20,3 @@ Build the production JavaScript with `npm run build`; run it with `npm start`.
 After creating `.env`, build and start the bot with `docker compose up --build -d`. To register or update the development slash command, run `npm run deploy:commands` in a Node.js environment with the same `.env` values. View service output with `docker compose logs -f bot` and stop it with `docker compose down`.
 
 The bot creates a versioned SQLite database at `DATABASE_PATH` (default `./data/discord-bot.sqlite`). Docker Compose stores it in the persistent `bot-data` volume. The current schema stores per-guild JSON settings and does not store Discord message content. Do not add real tokens, AI keys, server exports, or database files to Git.
-

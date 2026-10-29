@@ -51,4 +51,3 @@ export function setGuildSetting(
     )
     .run(guildId, settingKey, valueJson, new Date().toISOString());
 }
-

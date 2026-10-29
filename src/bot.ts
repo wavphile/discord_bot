@@ -64,4 +64,3 @@ try {
   database.close();
   process.exitCode = 1;
 }
-

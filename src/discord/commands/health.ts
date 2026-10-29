@@ -17,4 +17,3 @@ export async function executeHealthCommand(
     flags: MessageFlags.Ephemeral,
   });
 }
-

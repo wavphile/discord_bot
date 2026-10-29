@@ -44,4 +44,3 @@ if ((action !== "write" && action !== "verify") || !guildId) {
     database.close();
   }
 }
-

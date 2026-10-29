@@ -61,4 +61,3 @@ npm run dev
 Every pull request and push to `main` runs the same local checks with `npm run check`. The workflow uses the committed lockfile and Node.js version from `.nvmrc`; it has read-only repository access and no bot or AI secrets.
 
 The current checks cover formatting, TypeScript type checking, and compilation. Feature-specific automated tests will be added with the behavior they exercise. A pull request should state what can be tried, how to trigger it, the expected result, and any required setup or permissions.
-
