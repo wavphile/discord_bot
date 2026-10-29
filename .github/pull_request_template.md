@@ -22,4 +22,3 @@
 - [ ] `npm run check` passes
 - [ ] No secrets, real message exports, or production data were added
 - [ ] This PR does not require Discord or AI credentials in GitHub Actions
-

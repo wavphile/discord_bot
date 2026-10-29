@@ -15,4 +15,3 @@ await rest.put(
 console.info(
   `Registered ${commands.length} command(s) in the development server.`,
 );
-

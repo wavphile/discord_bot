@@ -39,4 +39,3 @@ process.once("SIGINT", () => void client.destroy());
 process.once("SIGTERM", () => void client.destroy());
 
 await client.login(env.DISCORD_BOT_TOKEN);
-
