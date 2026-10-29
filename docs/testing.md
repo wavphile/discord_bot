@@ -33,6 +33,29 @@ npm run dev
 
 Keep the bot running, open the test server, and follow the pull request's **Try it** steps. Run `/health`; it should privately report that the bot is responding and SQLite schema v1 is ready. Press Ctrl+C to stop the local bot.
 
+### Windows PowerShell helper
+
+After `scripts/try-pr.ps1` is available in your checkout, run this from the repository:
+
+```powershell
+.\scripts\try-pr.ps1 -PullRequestNumber 6
+```
+
+If PowerShell blocks local scripts, run it in a one-off PowerShell process:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\try-pr.ps1 -PullRequestNumber 6
+```
+
+The helper requires a clean checkout and Node.js 24.15 or newer in the 24.x line. It creates `.env` from the example and stops if you need to fill it in. It fetches the PR's current head into a local `try/pr-<number>` branch, installs locked dependencies, shows the application and test server IDs without displaying the token, and asks you to type `DEPLOY` before registering guild-scoped commands. It then starts the bot in the foreground. Try `/health` and press Ctrl+C when finished. The helper will not overwrite a pre-existing local branch with the same name.
+
+To return to the main branch afterward:
+
+```powershell
+git switch main
+git pull --ff-only
+```
+
 The PR's guild-scoped command registration updates commands in the configured test server immediately. It does not change commands in other servers. `.env` is ignored by Git and is preserved when switching commits.
 
 ### Try the storage migration and restart persistence
