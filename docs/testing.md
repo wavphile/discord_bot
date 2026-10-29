@@ -72,7 +72,7 @@ npm run storage:tryout -- write <test-server-id>
 npm run storage:tryout -- verify <test-server-id>
 ```
 
-The first command writes a marker and exits; the second opens the database in a new process and confirms the value survived. For Docker Compose, run `docker compose exec bot node dist/storage/tryout.js write <test-server-id>`, restart with `docker compose restart bot`, then run `docker compose exec bot node dist/storage/tryout.js verify <test-server-id>`. The marker is stored under `storage_tryout_marker` for that test server. `/health` also reports the active SQLite schema version.
+The first command writes a marker and exits; the second opens the database in a new process and confirms the value survived. For Docker Compose, use the container lifecycle and persistence workflow below. The marker is stored under `storage_tryout_marker` for that test server. `/health` also reports the active SQLite schema version.
 
 To return to the merged version afterward:
 
@@ -84,8 +84,45 @@ npm run deploy:commands
 npm run dev
 ```
 
+### Try the Docker Compose service
+
+Run these commands in PowerShell from the repository after `.env` is configured:
+
+```powershell
+docker compose up --build -d
+docker compose logs --tail 20 bot
+```
+
+Run `/health` in the private test server and confirm the bot responds. Check that the image does not contain dotenv files, and write a harmless SQLite marker:
+
+```powershell
+docker compose run --rm --entrypoint sh bot -c 'test ! -e /app/.env && test ! -e /app/.env.example && echo "PASS: no dotenv files in the image"'
+docker compose exec bot node dist/storage/tryout.js write 11111111111111111
+```
+
+Stop Compose and recreate the service without removing its named volume. Then verify the marker survived:
+
+```powershell
+docker compose stop bot
+docker compose logs --tail 20 bot
+docker compose down
+docker compose up --build -d
+docker compose exec bot node dist/storage/tryout.js verify 11111111111111111
+```
+
+The shutdown logs should include `process.shutdown` with `SIGTERM`. To verify the restart policy after a process failure, kill the container init process; the service should return to `Up` automatically:
+
+```powershell
+docker compose exec --user 0 bot sh -c "kill -KILL 1"
+Start-Sleep -Seconds 5
+docker compose ps
+docker compose logs --tail 20 bot
+```
+
+The failure command intentionally stops the container once. Do not use `docker compose down --volumes` during this check; it deletes the persistent database.
+
 ## Automated pull request checks
 
 Every pull request and push to `main` runs the same local checks with `npm run check`. The workflow uses the committed lockfile and Node.js version from `.nvmrc`; it has read-only repository access and no bot or AI secrets.
 
-The current checks cover formatting, TypeScript type checking, and compilation. Feature-specific automated tests will be added with the behavior they exercise. A pull request should state what can be tried, how to trigger it, the expected result, and any required setup or permissions.
+The workflow covers formatting, TypeScript type checking, compilation, Compose configuration, and production image building. It also checks that the image contains no dotenv files. Feature-specific automated tests will be added with the behavior they exercise. A pull request should state what can be tried, how to trigger it, the expected result, and any required setup or permissions.
