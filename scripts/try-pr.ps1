@@ -61,7 +61,7 @@ function Get-DotEnvValue {
 
 function Get-SnowflakeList {
     param(
-        [Parameter(Mandatory = $true)][string] $Value,
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string] $Value,
         [Parameter(Mandatory = $true)][string] $Name
     )
 
