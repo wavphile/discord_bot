@@ -2,7 +2,7 @@
 
 Status: design contract for the first inspection snapshot (M1) and later reviewed changes (M2). API references checked 30 October 2026.
 
-The matrix defines the bot's initial configuration boundary. The current bot only implements `/health`; this document does not enable inspection or writes. Fields not listed here remain out of scope until they are reviewed and added explicitly.
+The matrix defines the bot's initial configuration boundary. `/server inspect` captures these fields for channels returned by Discord to the bot. The command is read-only; later writes still require separate review. Fields not listed here remain out of scope until they are reviewed and added explicitly.
 
 ## Snapshot scope
 
