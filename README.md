@@ -6,6 +6,8 @@ A self-hosted Discord bot for server configuration inspection, permission explan
 
 Requirements: Node.js 24 LTS and an application created in the Discord Developer Portal. For local development, enable the **Server Members Intent** only when a feature needs it; the initial `/health` command uses the Guilds intent only.
 
+To try a pull request against a safe Discord test server, follow [the testing guide](docs/testing.md). Pull requests include a runnable tryout section, and GitHub Actions checks formatting, types, and the production build without Discord credentials.
+
 1. Copy `.env.example` to `.env` and set the bot token, application ID, and development server ID. Keep `.env` private.
 2. Install dependencies with `npm ci`.
 3. Register the development command with `npm run deploy:commands`.
