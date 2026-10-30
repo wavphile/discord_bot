@@ -1,7 +1,16 @@
 import { MessageFlags, SlashCommandBuilder } from "discord.js";
 import type { ChatInputCommandInteraction, Client } from "discord.js";
 import type { DatabaseSync } from "node:sqlite";
+import {
+  compareConfigurationSnapshots,
+  formatConfigurationSnapshotDiff,
+  SnapshotComparisonError,
+} from "../../features/snapshot-diff.js";
 import { captureConfigurationSnapshot } from "../../features/server-inspection.js";
+import {
+  getLatestConfigurationSnapshots,
+  UnsupportedSnapshotSchemaVersionError,
+} from "../../storage/snapshots.js";
 
 export const serverCommand = new SlashCommandBuilder()
   .setName("server")
@@ -10,6 +19,11 @@ export const serverCommand = new SlashCommandBuilder()
     subcommand
       .setName("inspect")
       .setDescription("Capture a private configuration snapshot."),
+  )
+  .addSubcommand((subcommand) =>
+    subcommand
+      .setName("diff")
+      .setDescription("Compare the two newest configuration snapshots."),
   );
 
 export async function executeServerCommand(
@@ -17,8 +31,6 @@ export async function executeServerCommand(
   client: Client,
   database: DatabaseSync,
 ): Promise<void> {
-  if (interaction.options.getSubcommand() !== "inspect") return;
-
   const guildId = interaction.guildId;
   if (!guildId) {
     await interaction.reply({
@@ -27,6 +39,13 @@ export async function executeServerCommand(
     });
     return;
   }
+
+  const subcommand = interaction.options.getSubcommand();
+  if (subcommand === "diff") {
+    await executeSnapshotDiff(interaction, database, guildId);
+    return;
+  }
+  if (subcommand !== "inspect") return;
 
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
   let snapshot: Awaited<ReturnType<typeof captureConfigurationSnapshot>>;
@@ -64,6 +83,52 @@ export async function executeServerCommand(
       `Visibility is limited to channels returned by Discord; ${unviewable} returned channel(s) are not viewable by the bot. ` +
       "This snapshot is not a complete server backup.",
   );
+}
+
+async function executeSnapshotDiff(
+  interaction: ChatInputCommandInteraction,
+  database: DatabaseSync,
+  guildId: string,
+): Promise<void> {
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+  let snapshots: ReturnType<typeof getLatestConfigurationSnapshots>;
+  try {
+    snapshots = getLatestConfigurationSnapshots(database, guildId, 2);
+  } catch (error) {
+    if (error instanceof UnsupportedSnapshotSchemaVersionError) {
+      await interaction.editReply(
+        "One of the newest saved snapshots uses an unsupported schema. Capture two snapshots with the current bot version before comparing them.",
+      );
+      return;
+    }
+    throw error;
+  }
+
+  if (snapshots.length < 2) {
+    await interaction.editReply(
+      "There are not enough saved snapshots to compare. Run `/server inspect` once more, then retry `/server diff`.",
+    );
+    return;
+  }
+
+  try {
+    const [newer, older] = snapshots;
+    if (!newer || !older) {
+      await interaction.editReply(
+        "There are not enough saved snapshots to compare. Run `/server inspect` once more, then retry `/server diff`.",
+      );
+      return;
+    }
+    const diff = compareConfigurationSnapshots(older, newer);
+    await interaction.editReply(formatConfigurationSnapshotDiff(diff));
+  } catch (error) {
+    if (error instanceof SnapshotComparisonError) {
+      await interaction.editReply(error.message);
+      return;
+    }
+    throw error;
+  }
 }
 
 function isMissingGuildAccess(error: unknown): boolean {
