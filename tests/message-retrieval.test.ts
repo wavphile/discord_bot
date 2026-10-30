@@ -135,6 +135,11 @@ test("message evidence applies same-channel, age, count, and future-date bounds"
   if (!result.ok) return;
   assert.equal(result.evidence.messageCount, 1);
   assert.match(result.evidence.prompt.input, /Older retained message/);
+  assert.deepEqual(
+    result.evidence.sources.map((source) => source.messageId),
+    [message(2).messageId],
+  );
+  assert.match(result.evidence.prompt.input, /"source_id":1/);
   assert.doesNotMatch(
     result.evidence.prompt.input,
     /Middle message|Future message/,

@@ -11,6 +11,7 @@ import { executePlanCommand } from "./discord/commands/plan.js";
 import { executePermissionsCommand } from "./discord/commands/permissions.js";
 import { executeServerCommand } from "./discord/commands/server.js";
 import { executeMessagesCommand } from "./discord/commands/messages.js";
+import { executeSummarizeCommand } from "./discord/commands/summarize.js";
 import {
   createDiscordPlanJobAdapter,
   DurablePlanJobRunner,
@@ -148,6 +149,20 @@ client.on(Events.InteractionCreate, async (interaction) => {
         database,
         env.AI_PROVIDER,
         aiProviders,
+      );
+    } else if (interaction.commandName === "summarize") {
+      await executeSummarizeCommand(
+        interaction,
+        database,
+        env.AI_PROVIDER,
+        aiProviders,
+        {
+          maxInputTokens: env.AI_MAX_INPUT_TOKENS,
+          maxOutputTokens: env.AI_MAX_OUTPUT_TOKENS,
+          dailyTokenBudgetPerGuild: env.AI_DAILY_TOKEN_BUDGET_PER_GUILD,
+          requestTimeoutMs: env.AI_REQUEST_TIMEOUT_MS,
+        },
+        gatewayCapabilities,
       );
     }
   } catch (error) {
