@@ -162,7 +162,7 @@ M4-24 adds opt-in SQLite retention through separate `/messages config storage-en
 
 | ID | Task | Acceptance criteria |
 | --- | --- | --- |
-| 25 | Verify amd64 and arm64 deployments | Same release runs on a Linux VM and an actual 64-bit Raspberry Pi; record model, RAM, server size, and measured resource usage |
+| 25 | [Verify amd64 and arm64 deployments](https://github.com/wavphile/discord_bot/issues/47) | Same release runs on a Linux VM and an actual 64-bit Raspberry Pi; record model, RAM, server size, and measured resource usage |
 | 26 | Implement operational recovery | Health checks, graceful stop, database-safe backup, restore rehearsal, disk-space handling, and token rotation guide |
 | 27 | Verify upgrade and downgrade procedure | Test migration from previous release; document that older images may require restoring a matching database backup |
 | 28 | Document feature extension | Add an example read-only feature using the module interface; module author does not modify executor or provider internals |
@@ -170,6 +170,8 @@ M4-24 adds opt-in SQLite retention through separate `/messages config storage-en
 | 30 | Publish first stable release | Release notes, supported-settings matrix, setup guide, operating limits, privacy/retention explanation, and known issues are complete |
 
 Exit gate: all MVP scenarios pass on both hosting targets; restore succeeds; no unresolved high-impact authorization or batch-execution defects.
+
+M5-25 is tracked in [issue #47](https://github.com/wavphile/discord_bot/issues/47). CI builds and smoke-tests the production image on native amd64 and arm64 GitHub-hosted runners. Running the same release on a real Linux VM and 64-bit Raspberry Pi, and recording device, server-size, and resource measurements, remain required before the release gate; see [deployment.md](deployment.md).
 
 ## 5. Important execution contracts
 

@@ -29,19 +29,26 @@ jobs:
       - name: Run checks
         run: npm run check
 
+  container-platforms:
+    name: Container smoke (${{ matrix.architecture }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - architecture: amd64
+            runner: ubuntu-24.04
+          - architecture: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
       - name: Prepare placeholder Compose environment
         run: cp .env.example .env
 
-      - name: Validate Docker Compose configuration
-        run: docker compose config --quiet
-
-      - name: Build production container image
-        run: docker compose build bot
-
-      - name: Verify image contents and persistent volume permissions
-        run: >-
-          docker compose run --rm --entrypoint sh bot -c
-          'test ! -e /app/.env && test ! -e /app/.env.example && test -w /app/data'
+      - name: Build and smoke-test native container image
+        run: sh scripts/smoke-container.sh ${{ matrix.architecture }}
 
       - name: Remove placeholder Compose environment
         if: always()
