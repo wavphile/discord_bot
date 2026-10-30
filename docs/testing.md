@@ -33,7 +33,7 @@ npm run deploy:commands
 npm run dev
 ```
 
-Keep the bot running, open the test server, and follow the pull request's **Try it** steps. Run `/health`; it should privately report that the bot is responding and SQLite schema v5 is ready. Run `/server inspect`; it should privately report a snapshot ID, capture time, role/category/channel/overwrite counts, and limited channel visibility. The command stores a configuration snapshot in SQLite. It does not change server settings and is not a complete server backup.
+Keep the bot running, open the test server, and follow the pull request's **Try it** steps. Run `/health`; it should privately report that the bot is responding and SQLite schema v6 is ready. Run `/server inspect`; it should privately report a snapshot ID, capture time, role/category/channel/overwrite counts, and limited channel visibility. The command stores a configuration snapshot in SQLite. It does not change server settings and is not a complete server backup.
 
 Run `/server inspect` a second time, then `/server diff`. The private comparison should show the two capture times and any differences in supported server settings, roles, returned channels, and channel permission overwrites. The comparison always warns that channel visibility is limited: a channel returned in only one snapshot may have been added or deleted, or may have become visible or inaccessible to the bot. Its presence alone does not establish which. Details for a channel that was unviewable in either snapshot are omitted. With fewer than two snapshots, `/server diff` asks you to capture another one.
 
@@ -122,6 +122,31 @@ Live tests that write settings are pending. Use disposable test channels and an 
 As of October 30, 2026, a live test-server smoke test passed for `/plan slowmode channels:#bots seconds:5`: the private preview resolved `#bots`, showed slowmode `0` before and `5` after, saved a preview expiring in 30 minutes, and confirmed no Discord changes were applied. Live smoke tests for `/plan topic` and `/plan permission` are still pending; their automated checks pass, but they should be tried in Discord before a later release that depends on them. The permission test requires a custom unmanaged role.
 
 The permission preview preserves all existing overwrite bits while changing only the selected bit. The commands do not require permission to write to Discord because they perform no Discord writes. `npm test` covers selector parsing/resolution, visibility/type checks, no-op filtering, bit preservation, all-or-nothing planning, and private preview behavior.
+
+### Inspect audit history and prepare a reviewed reversal
+
+Each saved plan has an audit history recording its reason, actor, approver, before/after values, and lifecycle outcomes. Provide a short operational reason when creating a topic, slowmode, or permission preview; approval, rejection, and cancellation also accept optional notes. Do not put tokens, passwords, or other secrets in reasons. Events are retained in the local SQLite database indefinitely; there is no automatic pruning. Append-only triggers prevent individual event edits or deletes, while deleting or replacing the database removes its audit history. Include the database in protected backups and handle it as operational data.
+
+The original requester or a configured approver can inspect the plan privately:
+
+```text
+/plan audit plan_id:<full-plan-uuid>
+/plan audit plan_id:<full-plan-uuid> before_event_id:<event-uuid-from-the-previous-page>
+```
+
+The first command returns the newest 50 events. If older events exist, the private response includes the `before_event_id` value for the next page.
+
+After an execution job has finished, the original requester or a configured approver can prepare an inverse for the items that successfully applied:
+
+```text
+/plan reverse job_id:<full-job-uuid> reason:<why-the-change-is-being-reversed>
+```
+
+The command reads Discord again and creates no plan if any applied target is missing, unreadable, or no longer equals the value recorded by the job. A successful response is a new ordinary preview with its own plan ID. Submit it for independent approval using `/plan submit`; a configured approver must review and approve it, then separately run `/plan apply` if the proposed restoration is still wanted. Reversals are supported for the existing topic, slowmode, and selected role-overwrite plan items. No reversal command itself changes Discord settings.
+
+Automated tests cover append-only audit persistence, audit metadata, exact reversal scope, and stale-value rejection. Live audit viewing can be checked against a plan created by `/plan slowmode`; the original preview-only smoke test did not exercise this new command. Live approval, application, and reversal remain pending because the test server does not currently have an available separate approver account. The M2 exit gate of applying a change across 10 disposable channels and verifying partial failure/restart behavior also remains pending.
+
+The schema v6 migration seeds a clearly marked historical baseline from existing plans, approval metadata, jobs, and item state. Databases upgraded from schema v5 did not previously retain the full event timeline, so imported entries summarize only the state still available and do not reconstruct missing decisions, retries, or intermediate outcomes.
 
 ### Try the storage migration and restart persistence
 

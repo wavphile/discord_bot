@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { DatabaseSync } from "node:sqlite";
 import {
   CHANGE_PLAN_TTL_MS,
   formatChangePlanPreview,
@@ -8,6 +9,7 @@ import {
   type CreateChangePlanInput,
 } from "../src/features/change-plans.js";
 import { getSchemaVersion, openDatabase } from "../src/storage/database.js";
+import { migrations } from "../src/storage/migrations.js";
 import {
   createChangePlan,
   getChangePlan,
@@ -73,18 +75,134 @@ function createInput(
   };
 }
 
-test("migration 5 adds durable plan-job storage after approval metadata", () => {
+test("migration 6 adds durable plan-job and plan-audit storage", () => {
   const database = openDatabase(":memory:");
   try {
-    assert.equal(getSchemaVersion(database), 5);
+    assert.equal(getSchemaVersion(database), 6);
     assert.equal(
       database
         .prepare(
-          "SELECT COUNT(*) AS count FROM sqlite_master WHERE type = 'table' AND name IN ('change_plans', 'change_plan_items', 'plan_jobs', 'plan_job_items')",
+          "SELECT COUNT(*) AS count FROM sqlite_master WHERE type = 'table' AND name IN ('change_plans', 'change_plan_items', 'plan_jobs', 'plan_job_items', 'plan_audit_events')",
         )
         .get()?.["count"],
-      4,
+      5,
     );
+  } finally {
+    database.close();
+  }
+});
+
+test("migration 6 backfills legacy plan and job state into the audit log", () => {
+  const database = new DatabaseSync(":memory:");
+  try {
+    database.exec("PRAGMA foreign_keys = ON;");
+    database.exec(`
+      CREATE TABLE schema_migrations (
+        version INTEGER PRIMARY KEY,
+        name TEXT NOT NULL,
+        applied_at TEXT NOT NULL
+      );
+    `);
+    for (const migration of migrations.slice(0, 5)) {
+      database.exec("BEGIN IMMEDIATE;");
+      migration.up(database);
+      database
+        .prepare(
+          "INSERT INTO schema_migrations (version, name, applied_at) VALUES (?, ?, ?)",
+        )
+        .run(migration.version, migration.name, now.toISOString());
+      database.exec("COMMIT;");
+    }
+
+    const planId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const jobId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+    database
+      .prepare(
+        `INSERT INTO change_plans
+          (plan_id, guild_id, requested_by, created_at, expires_at, status,
+           submitted_at, decision_by, decision_at)
+         VALUES (?, ?, ?, ?, ?, 'applied', ?, ?, ?)`,
+      )
+      .run(
+        planId,
+        guildId,
+        requesterId,
+        "2026-10-30T00:00:00.000Z",
+        "2026-10-30T00:30:00.000Z",
+        "2026-10-30T00:01:00.000Z",
+        requesterId,
+        "2026-10-30T00:02:00.000Z",
+      );
+    database
+      .prepare(
+        `INSERT INTO change_plan_items
+          (plan_id, ordinal, channel_id, channel_type, setting_key,
+           subject_id, before_json, after_json)
+         VALUES (?, 0, ?, 'text', 'channel.topic', NULL, 'null', '"new topic"')`,
+      )
+      .run(planId, "33333333333333333");
+    database
+      .prepare(
+        `INSERT INTO plan_jobs
+          (job_id, plan_id, guild_id, requested_by, approved_by, created_by,
+           created_at, started_at, finished_at, status)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'applied')`,
+      )
+      .run(
+        jobId,
+        planId,
+        guildId,
+        requesterId,
+        requesterId,
+        requesterId,
+        "2026-10-30T00:03:00.000Z",
+        "2026-10-30T00:04:00.000Z",
+        "2026-10-30T00:06:00.000Z",
+      );
+    database
+      .prepare(
+        `INSERT INTO plan_job_items
+          (job_id, plan_id, ordinal, status, attempts, started_at, finished_at)
+         VALUES (?, ?, 0, 'applied', 1, ?, ?)`,
+      )
+      .run(
+        jobId,
+        planId,
+        "2026-10-30T00:04:00.000Z",
+        "2026-10-30T00:05:00.000Z",
+      );
+
+    const auditMigration = migrations.find(
+      (migration) => migration.version === 6,
+    );
+    assert.ok(auditMigration);
+    auditMigration.up(database);
+
+    const events = database
+      .prepare(
+        "SELECT action, outcome, plan_id, job_id FROM plan_audit_events ORDER BY created_at ASC",
+      )
+      .all() as Array<{
+      action: string;
+      outcome: string;
+      plan_id: string;
+      job_id: string | null;
+    }>;
+    assert.deepEqual(
+      events.map((event) => event.action),
+      [
+        "preview_created",
+        "plan_submitted",
+        "plan_approved",
+        "job_queued",
+        "job_started",
+        "item_outcome",
+        "job_finished",
+      ],
+    );
+    assert.ok(events.every((event) => event.plan_id === planId));
+    assert.ok(events.slice(3).every((event) => event.job_id === jobId));
+    assert.equal(events.at(-1)?.outcome, "applied");
   } finally {
     database.close();
   }

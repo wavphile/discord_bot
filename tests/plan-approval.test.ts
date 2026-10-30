@@ -11,7 +11,10 @@ import {
   authorizeInteraction,
   authorizePlanApprover,
 } from "../src/core/authorization.js";
-import { evaluatePlanPreflight } from "../src/features/plan-approval.js";
+import {
+  evaluatePlanPreflight,
+  prepareReviewedReversal,
+} from "../src/features/plan-approval.js";
 import type {
   ChangePlan,
   ChangePlanChange,
@@ -60,6 +63,32 @@ function planChanges(): ChangePlanChange[] {
     },
   ];
 }
+
+test("a reversal preview is ready only while every applied value is unchanged", () => {
+  const changes = planChanges();
+  const items = changes.map((change, ordinal) => ({ ordinal, change }));
+  const observations = items.map(({ ordinal, change }) => ({
+    ordinal,
+    current: change.after,
+    readable: true,
+    targetAvailable: true,
+  }));
+  const prepared = prepareReviewedReversal(items, observations);
+  assert.equal(prepared.ready, true);
+  assert.deepEqual(
+    prepared.changes.map((change) => [change.before, change.after]),
+    changes.map((change) => [change.after, change.before]),
+  );
+
+  const stale = prepareReviewedReversal(items, [
+    { ...observations[0]!, current: changes[0]!.before },
+    ...observations.slice(1),
+  ]);
+  assert.equal(stale.ready, false);
+  assert.deepEqual(stale.changes, []);
+  assert.equal(stale.issues[0]?.ordinal, 0);
+  assert.match(stale.issues[0]?.reason ?? "", /differs from the value applied/);
+});
 
 function createPendingPlan(
   changes = planChanges(),

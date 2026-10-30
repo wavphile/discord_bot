@@ -29,6 +29,7 @@ export type PlanJob = Readonly<{
   requestedBy: string;
   approvedBy: string;
   createdBy: string;
+  reason: string;
   createdAt: string;
   startedAt: string | null;
   finishedAt: string | null;

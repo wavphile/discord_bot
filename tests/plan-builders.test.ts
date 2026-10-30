@@ -218,6 +218,8 @@ test("preview names exact targets, values, and states that no edits were applied
       guildId,
       requestedBy: "22222222222222222",
       sourceSnapshotId: null,
+      reason: "No reason provided.",
+      reversalOfJobId: null,
       createdAt: "2026-10-30T00:00:00.000Z",
       expiresAt: "2026-10-30T00:30:00.000Z",
       status: "preview",
