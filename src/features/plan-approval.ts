@@ -67,7 +67,7 @@ export function evaluatePlanPreflight(
       continue;
     }
 
-    if (!matchesBefore(change, observation.current)) {
+    if (!matchesPlanValue(change, observation.current, "before")) {
       issues.push({
         item: index + 1,
         channelId: change.channelId,
@@ -79,28 +79,31 @@ export function evaluatePlanPreflight(
   return { ready: issues.length === 0, issues };
 }
 
-function matchesBefore(
+export function matchesPlanValue(
   change: ChangePlanChange,
   current: PlanTargetObservation["current"],
+  expected: "before" | "after",
 ): boolean {
+  const expectedValue = change[expected];
   if (change.settingKey === "channel.topic") {
     return (
       (typeof current === "string" || current === null) &&
-      current === change.before
+      current === expectedValue
     );
   }
 
   if (change.settingKey === "channel.slowmode") {
-    return typeof current === "number" && current === change.before;
+    return typeof current === "number" && current === expectedValue;
   }
 
-  if (current === null || change.before === null) {
-    return current === change.before;
+  if (current === null || expectedValue === null) {
+    return current === expectedValue;
   }
 
+  if (typeof current !== "object" || typeof expectedValue !== "object") {
+    return false;
+  }
   return (
-    typeof current === "object" &&
-    current.allow === change.before.allow &&
-    current.deny === change.before.deny
+    current.allow === expectedValue.allow && current.deny === expectedValue.deny
   );
 }

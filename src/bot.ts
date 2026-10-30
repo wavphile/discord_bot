@@ -14,6 +14,10 @@ import { executeHealthCommand } from "./discord/commands/health.js";
 import { executePlanCommand } from "./discord/commands/plan.js";
 import { executePermissionsCommand } from "./discord/commands/permissions.js";
 import { executeServerCommand } from "./discord/commands/server.js";
+import {
+  createDiscordPlanJobAdapter,
+  DurablePlanJobRunner,
+} from "./discord/plan-job-runner.js";
 import { logger } from "./observability/logger.js";
 import { getSchemaVersion, openDatabase } from "./storage/database.js";
 
@@ -30,6 +34,12 @@ const approvalAuthorizationPolicy = {
   approverUserIds: new Set(env.DISCORD_APPROVER_USER_IDS),
   approverRoleIds: new Set(env.DISCORD_APPROVER_ROLE_IDS),
 };
+const planJobRunner = new DurablePlanJobRunner(
+  database,
+  client,
+  authorizationPolicy,
+  createDiscordPlanJobAdapter(client, authorizationPolicy),
+);
 let shuttingDown = false;
 
 logger.info("storage.ready", { schemaVersion });
@@ -48,6 +58,7 @@ if (
 
 client.once(Events.ClientReady, () => {
   logger.info("discord.ready", { schemaVersion });
+  planJobRunner.resumeOnStartup();
 });
 
 client.on(Events.InteractionCreate, async (interaction) => {
@@ -60,7 +71,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
   const approvalCommand =
     interaction.isChatInputCommand() &&
     interaction.commandName === "plan" &&
-    ["review", "approve", "reject"].includes(
+    ["review", "approve", "reject", "apply", "cancel", "status"].includes(
       interaction.options.getSubcommand(false) ?? "",
     );
   const approverDecision = approvalCommand
@@ -90,6 +101,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       await executePlanCommand(interaction, database, {
         requesterAuthorization: authorizationPolicy,
         approvalAuthorization: approvalAuthorizationPolicy,
+        jobRunner: planJobRunner,
       });
     } else if (interaction.commandName === "server") {
       await executeServerCommand(interaction, client, database);
@@ -140,16 +152,17 @@ client.on(Events.Error, (error) => {
   logger.error("discord.client.error", error);
 });
 
-function shutdown(signal: "SIGINT" | "SIGTERM"): void {
+async function shutdown(signal: "SIGINT" | "SIGTERM"): Promise<void> {
   if (shuttingDown) return;
   shuttingDown = true;
   logger.info("process.shutdown", { signal });
+  await planJobRunner.stop();
   client.destroy();
   database.close();
 }
 
-process.once("SIGINT", () => shutdown("SIGINT"));
-process.once("SIGTERM", () => shutdown("SIGTERM"));
+process.once("SIGINT", () => void shutdown("SIGINT"));
+process.once("SIGTERM", () => void shutdown("SIGTERM"));
 
 try {
   await client.login(env.DISCORD_BOT_TOKEN);

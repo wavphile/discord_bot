@@ -31,6 +31,8 @@ import {
   formatChangePlanPreview,
   type ChangePlanChange,
 } from "../../features/change-plans.js";
+import { describePlanJob } from "../../features/durable-plan-jobs.js";
+import type { DurablePlanJobRunner } from "../plan-job-runner.js";
 import { preflightChangePlanOnDiscord } from "../change-plan-preflight.js";
 import {
   approveChangePlan,
@@ -42,6 +44,11 @@ import {
   submitChangePlanForApproval,
 } from "../../storage/change-plans.js";
 import {
+  enqueueApprovedPlan,
+  getPlanJob,
+  PlanJobStorageError,
+} from "../../storage/plan-jobs.js";
+import {
   getLatestConfigurationSnapshots,
   UnsupportedSnapshotSchemaVersionError,
 } from "../../storage/snapshots.js";
@@ -51,6 +58,7 @@ const maxSelectorLength = 1_024;
 export type PlanCommandContext = Readonly<{
   requesterAuthorization: AuthorizationPolicy;
   approvalAuthorization: ApprovalPolicy;
+  jobRunner: DurablePlanJobRunner;
 }>;
 
 export const planCommand = new SlashCommandBuilder()
@@ -188,6 +196,45 @@ export const planCommand = new SlashCommandBuilder()
           .setMaxLength(36)
           .setRequired(true),
       ),
+  )
+  .addSubcommand((subcommand) =>
+    subcommand
+      .setName("apply")
+      .setDescription("Start a durable job for an approved plan.")
+      .addStringOption((option) =>
+        option
+          .setName("plan_id")
+          .setDescription("The full approved plan UUID.")
+          .setMinLength(36)
+          .setMaxLength(36)
+          .setRequired(true),
+      ),
+  )
+  .addSubcommand((subcommand) =>
+    subcommand
+      .setName("cancel")
+      .setDescription("Request cancellation between job items.")
+      .addStringOption((option) =>
+        option
+          .setName("job_id")
+          .setDescription("The full execution job UUID.")
+          .setMinLength(36)
+          .setMaxLength(36)
+          .setRequired(true),
+      ),
+  )
+  .addSubcommand((subcommand) =>
+    subcommand
+      .setName("status")
+      .setDescription("Privately check a plan execution job.")
+      .addStringOption((option) =>
+        option
+          .setName("job_id")
+          .setDescription("The full execution job UUID.")
+          .setMinLength(36)
+          .setMaxLength(36)
+          .setRequired(true),
+      ),
   );
 
 export async function executePlanCommand(
@@ -233,9 +280,25 @@ export async function executePlanCommand(
     }
     if (subcommand === "reject") {
       await rejectPlan(interaction, database, context);
+      return;
+    }
+    if (subcommand === "apply") {
+      await applyPlan(interaction, database, context);
+      return;
+    }
+    if (subcommand === "cancel") {
+      await cancelJob(interaction, database, context);
+      return;
+    }
+    if (subcommand === "status") {
+      await showJobStatus(interaction, database, context);
     }
   } catch (error) {
     if (error instanceof ChangePlanTransitionError) {
+      await editPrivateReply(interaction, error.message);
+      return;
+    }
+    if (error instanceof PlanJobStorageError) {
       await editPrivateReply(interaction, error.message);
       return;
     }
@@ -260,6 +323,97 @@ export async function executePlanCommand(
     }
     throw error;
   }
+}
+
+async function applyPlan(
+  interaction: ChatInputCommandInteraction,
+  database: DatabaseSync,
+  context: PlanCommandContext | undefined,
+): Promise<void> {
+  if (!isApprover(interaction, context)) {
+    await editPrivateReply(
+      interaction,
+      "You are not configured to apply approved change plans.",
+    );
+    return;
+  }
+  const guildId = interaction.guildId;
+  if (!guildId || !context) return;
+  const job = enqueueApprovedPlan(
+    database,
+    guildId,
+    interaction.options.getString("plan_id", true),
+    interaction.user.id,
+  );
+  context.jobRunner.schedule(guildId, job.id);
+  await editPrivateReply(
+    interaction,
+    `Execution job \`${job.id}\` is queued. Use \`/plan status job_id:${job.id}\` to check progress.`,
+  );
+}
+
+async function cancelJob(
+  interaction: ChatInputCommandInteraction,
+  database: DatabaseSync,
+  context: PlanCommandContext | undefined,
+): Promise<void> {
+  const guildId = interaction.guildId;
+  if (!guildId || !context) return;
+  const jobId = interaction.options.getString("job_id", true);
+  const job = getPlanJob(database, guildId, jobId);
+  if (!job) {
+    await editPrivateReply(
+      interaction,
+      "Plan execution job not found in this server.",
+    );
+    return;
+  }
+  const requesterOwnsJob = job.requestedBy === interaction.user.id;
+  const approver = isApprover(interaction, context);
+  if (!requesterOwnsJob && !approver) {
+    await editPrivateReply(
+      interaction,
+      "Only the original requester or a configured approver can cancel this job.",
+    );
+    return;
+  }
+  context.jobRunner.requestCancellation(guildId, jobId);
+  await editPrivateReply(
+    interaction,
+    `Cancellation requested for job \`${jobId}\`. Any current Discord operation will finish before the job stops.`,
+  );
+}
+
+async function showJobStatus(
+  interaction: ChatInputCommandInteraction,
+  database: DatabaseSync,
+  context: PlanCommandContext | undefined,
+): Promise<void> {
+  const guildId = interaction.guildId;
+  if (!guildId || !context) return;
+  const job = getPlanJob(
+    database,
+    guildId,
+    interaction.options.getString("job_id", true),
+  );
+  if (!job) {
+    await editPrivateReply(
+      interaction,
+      "Plan execution job not found in this server.",
+    );
+    return;
+  }
+  if (
+    job.requestedBy !== interaction.user.id &&
+    !isApprover(interaction, context)
+  ) {
+    await editPrivateReply(
+      interaction,
+      "Only the original requester or a configured approver can inspect this job.",
+    );
+    return;
+  }
+  await sendPrivateMessages(interaction, describePlanJob(job));
 }
 
 async function createTopicPreview(
