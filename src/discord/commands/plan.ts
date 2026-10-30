@@ -3,11 +3,22 @@ import {
   escapeMarkdown,
   MessageFlags,
   OverwriteType,
+  PermissionFlagsBits,
   SlashCommandBuilder,
   type ChatInputCommandInteraction,
   type GuildBasedChannel,
 } from "discord.js";
 import type { DatabaseSync } from "node:sqlite";
+import {
+  AiInputLimitError,
+  AiProviderError,
+  AiUsageLimitError,
+} from "../../ai/errors.js";
+import type { AiProvider } from "../../ai/types.js";
+import {
+  generateForGuild,
+  type AiGenerationLimits,
+} from "../../features/ai-generation.js";
 import {
   authorizeInteraction,
   authorizePlanApprover,
@@ -57,6 +68,15 @@ import {
   getLatestConfigurationSnapshots,
   UnsupportedSnapshotSchemaVersionError,
 } from "../../storage/snapshots.js";
+import {
+  buildPlanSuggestionChanges,
+  buildPlanSuggestionPrompt,
+  MAX_PLAN_SUGGESTION_CHANNELS,
+  MAX_PLAN_SUGGESTION_REQUEST_LENGTH,
+  parsePlanSuggestionOutput,
+  type PlanSuggestionRole,
+  type PlanSuggestionTarget,
+} from "../../features/plan-suggestions.js";
 
 const maxSelectorLength = 1_024;
 
@@ -64,6 +84,8 @@ export type PlanCommandContext = Readonly<{
   requesterAuthorization: AuthorizationPolicy;
   approvalAuthorization: ApprovalPolicy;
   jobRunner: DurablePlanJobRunner;
+  aiProvider?: AiProvider;
+  aiLimits?: AiGenerationLimits;
 }>;
 
 export const planCommand = new SlashCommandBuilder()
@@ -173,6 +195,38 @@ export const planCommand = new SlashCommandBuilder()
           .setDescription(
             "Why this change is requested (up to 500 characters).",
           )
+          .setMaxLength(500)
+          .setRequired(false),
+      ),
+  )
+  .addSubcommand((subcommand) =>
+    subcommand
+      .setName("suggest")
+      .setDescription("Preview a bounded AI configuration suggestion.")
+      .addStringOption((option) =>
+        option
+          .setName("request")
+          .setDescription("What configuration would you like to change?")
+          .setMinLength(1)
+          .setMaxLength(MAX_PLAN_SUGGESTION_REQUEST_LENGTH)
+          .setRequired(true),
+      )
+      .addStringOption((option) =>
+        option
+          .setName("channels")
+          .setDescription("Channels the suggestion may target (up to 10).")
+          .setMaxLength(maxSelectorLength)
+          .setRequired(true),
+      )
+      .addRoleOption((option) =>
+        option
+          .setName("role")
+          .setDescription("Optional custom role for a permission suggestion."),
+      )
+      .addStringOption((option) =>
+        option
+          .setName("reason")
+          .setDescription("Optional short operational reason for the audit.")
           .setMaxLength(500)
           .setRequired(false),
       ),
@@ -358,6 +412,10 @@ export async function executePlanCommand(
     }
     if (subcommand === "permission") {
       await createPermissionPreview(interaction, database);
+      return;
+    }
+    if (subcommand === "suggest") {
+      await createSuggestedPlanPreview(interaction, database, context);
       return;
     }
     if (subcommand === "submit") {
@@ -858,6 +916,277 @@ async function createPermissionPreview(
   );
 }
 
+async function createSuggestedPlanPreview(
+  interaction: ChatInputCommandInteraction,
+  database: DatabaseSync,
+  context: PlanCommandContext | undefined,
+): Promise<void> {
+  const guild = interaction.guild;
+  const provider = context?.aiProvider;
+  const limits = context?.aiLimits;
+  if (!guild || !provider || !limits) {
+    await editPrivateReply(
+      interaction,
+      "AI plan suggestions are not configured for this bot.",
+    );
+    return;
+  }
+
+  const request = interaction.options.getString("request", true).trim();
+  if (!request || request.length > MAX_PLAN_SUGGESTION_REQUEST_LENGTH) {
+    await editPrivateReply(
+      interaction,
+      `Enter a request from 1 to ${MAX_PLAN_SUGGESTION_REQUEST_LENGTH} characters. No plan was saved.`,
+    );
+    return;
+  }
+  const selectors = interaction.options.getString("channels", true);
+  if (parseChannelSelectors(selectors).length > MAX_PLAN_SUGGESTION_CHANNELS) {
+    await editPrivateReply(
+      interaction,
+      `Choose at most ${MAX_PLAN_SUGGESTION_CHANNELS} channels. No plan was saved.`,
+    );
+    return;
+  }
+
+  const selectedChannels = await fetchSelectedChannels(guild, selectors, [
+    ChannelType.GuildText,
+    ChannelType.GuildVoice,
+  ]);
+  await guild.roles.fetch(undefined, { force: true });
+  const requester = await guild.members.fetch({
+    user: interaction.user.id,
+    force: true,
+  });
+  for (const channel of selectedChannels) {
+    if (!(
+      channel.permissionsFor(requester)?.has(PermissionFlagsBits.ViewChannel) ??
+      false
+    )) {
+      throw new TypeError(
+        `You need current View Channel access to #${channel.name}. No plan was saved.`,
+      );
+    }
+  }
+
+  const selectedRoleOption = interaction.options.getRole("role");
+  const selectedRole = selectedRoleOption
+    ? await fetchSuggestionRole(guild, selectedRoleOption.id)
+    : undefined;
+  const initialTargets = makeSuggestionTargets(
+    selectedChannels,
+    selectedRole?.id,
+  );
+  const prompt = buildPlanSuggestionPrompt(
+    request,
+    initialTargets,
+    selectedRole ? { name: selectedRole.name } : undefined,
+  );
+
+  const now = new Date();
+  let completion;
+  try {
+    completion = await generateForGuild(
+      database,
+      provider,
+      guild.id,
+      prompt,
+      limits,
+      now,
+    );
+  } catch (error) {
+    if (error instanceof AiInputLimitError) {
+      await editPrivateReply(
+        interaction,
+        "The selected channels and request exceed the configured AI input limit. Choose fewer channels or shorten the request. No plan was saved.",
+      );
+      return;
+    }
+    if (error instanceof AiUsageLimitError) {
+      await editPrivateReply(
+        interaction,
+        "This server has reached its daily AI token allowance. No plan was saved.",
+      );
+      return;
+    }
+    if (error instanceof AiProviderError) {
+      await editPrivateReply(
+        interaction,
+        error.kind === "configuration"
+          ? "The configured AI provider is not ready. No plan was saved."
+          : "The AI provider could not complete this request. No plan was saved.",
+      );
+      return;
+    }
+    throw error;
+  }
+
+  let candidates;
+  try {
+    candidates = parsePlanSuggestionOutput(
+      completion.text,
+      initialTargets.length,
+      selectedRole !== undefined,
+    );
+  } catch (error) {
+    if (provider.id === "mock") {
+      await editPrivateReply(
+        interaction,
+        "The mock provider returns sample text, not executable change suggestions. No plan was saved and no Discord settings were changed.",
+      );
+      return;
+    }
+    throw error;
+  }
+
+  const refreshedChannels = await fetchSelectedChannels(guild, selectors, [
+    ChannelType.GuildText,
+    ChannelType.GuildVoice,
+  ]);
+  await guild.roles.fetch(undefined, { force: true });
+  const refreshedRequester = await guild.members.fetch({
+    user: interaction.user.id,
+    force: true,
+  });
+  for (const channel of refreshedChannels) {
+    if (!(
+      channel
+        .permissionsFor(refreshedRequester)
+        ?.has(PermissionFlagsBits.ViewChannel) ?? false
+    )) {
+      throw new TypeError(
+        `Your current View Channel access to #${channel.name} could not be confirmed. No plan was saved.`,
+      );
+    }
+  }
+  const refreshedRole = selectedRole
+    ? await fetchSuggestionRole(guild, selectedRole.id)
+    : undefined;
+  const currentTargets = makeSuggestionTargets(
+    refreshedChannels,
+    refreshedRole?.id,
+  );
+  if (!sameSuggestionState(initialTargets, currentTargets)) {
+    throw new TypeError(
+      "A selected channel setting changed while the suggestion was generated. Run the request again to preview a proposal based on current settings. No plan was saved.",
+    );
+  }
+
+  const result = buildPlanSuggestionChanges(
+    candidates,
+    currentTargets,
+    refreshedRole,
+  );
+  await saveAndReply(
+    interaction,
+    database,
+    result,
+    refreshedChannels,
+    refreshedRole?.name,
+    interaction.options.getString("reason")?.trim() ||
+      "AI-assisted proposal; review every item before submission.",
+    null,
+    "AI suggestion based on the selected channels' live settings. Review each item before submitting. No Discord settings have been changed.",
+  );
+}
+
+async function fetchSuggestionRole(
+  guild: NonNullable<ChatInputCommandInteraction["guild"]>,
+  roleId: string,
+): Promise<PlanSuggestionRole> {
+  await guild.roles.fetch(undefined, { force: true });
+  const role = guild.roles.cache.get(roleId);
+  if (!role || role.managed || role.id === guild.id) {
+    throw new TypeError(
+      "Choose an existing unmanaged custom role. No plan was saved.",
+    );
+  }
+  return {
+    id: role.id,
+    name: role.name,
+    managed: role.managed,
+    everyone: role.id === guild.id,
+  };
+}
+
+function makeSuggestionTargets(
+  channels: readonly GuildBasedChannel[],
+  roleId?: string,
+): PlanSuggestionTarget[] {
+  return channels.map((channel) => {
+    if (channel.type === ChannelType.GuildText) {
+      const overwrite = roleId
+        ? channel.permissionOverwrites.cache.get(roleId)
+        : undefined;
+      if (overwrite && overwrite.type !== OverwriteType.Role) {
+        throw new TypeError(
+          `The selected role overwrite on #${channel.name} is invalid. No plan was saved.`,
+        );
+      }
+      return {
+        id: channel.id,
+        name: channel.name,
+        type: "text",
+        topic: channel.topic,
+        slowmode: channel.rateLimitPerUser,
+        roleOverwrite: overwrite
+          ? {
+              allow: overwrite.allow.bitfield.toString(10),
+              deny: overwrite.deny.bitfield.toString(10),
+            }
+          : null,
+      };
+    }
+    if (channel.type === ChannelType.GuildVoice) {
+      const overwrite = roleId
+        ? channel.permissionOverwrites.cache.get(roleId)
+        : undefined;
+      if (overwrite && overwrite.type !== OverwriteType.Role) {
+        throw new TypeError(
+          `The selected role overwrite on #${channel.name} is invalid. No plan was saved.`,
+        );
+      }
+      return {
+        id: channel.id,
+        name: channel.name,
+        type: "voice",
+        topic: null,
+        slowmode: 0,
+        roleOverwrite: overwrite
+          ? {
+              allow: overwrite.allow.bitfield.toString(10),
+              deny: overwrite.deny.bitfield.toString(10),
+            }
+          : null,
+      };
+    }
+    throw new TypeError(
+      `Channel #${channel.name} is not supported for AI suggestions. No plan was saved.`,
+    );
+  });
+}
+
+function sameSuggestionState(
+  before: readonly PlanSuggestionTarget[],
+  after: readonly PlanSuggestionTarget[],
+): boolean {
+  return (
+    before.length === after.length &&
+    before.every((target, index) => {
+      const current = after[index];
+      return (
+        current !== undefined &&
+        target.id === current.id &&
+        target.type === current.type &&
+        target.topic === current.topic &&
+        target.slowmode === current.slowmode &&
+        JSON.stringify(target.roleOverwrite) ===
+          JSON.stringify(current.roleOverwrite)
+      );
+    })
+  );
+}
+
 async function submitPlan(
   interaction: ChatInputCommandInteraction,
   database: DatabaseSync,
@@ -1133,6 +1462,8 @@ async function saveAndReply(
   channels: readonly GuildBasedChannel[],
   roleName?: string,
   reason?: string,
+  sourceSnapshotIdOverride?: string | null,
+  additionalNote?: string,
 ): Promise<void> {
   const guildId = interaction.guildId;
   if (!guildId) return;
@@ -1145,15 +1476,18 @@ async function saveAndReply(
     return;
   }
 
-  let sourceSnapshotId: string | null = null;
+  let sourceSnapshotId: string | null = sourceSnapshotIdOverride ?? null;
   let sourceSnapshotNote: string | null = null;
-  try {
-    sourceSnapshotId =
-      getLatestConfigurationSnapshots(database, guildId, 1)[0]?.id ?? null;
-  } catch (error) {
-    if (!(error instanceof UnsupportedSnapshotSchemaVersionError)) throw error;
-    sourceSnapshotNote =
-      "The latest saved snapshot uses an unsupported schema; this plan uses the current live values instead.";
+  if (sourceSnapshotIdOverride === undefined) {
+    try {
+      sourceSnapshotId =
+        getLatestConfigurationSnapshots(database, guildId, 1)[0]?.id ?? null;
+    } catch (error) {
+      if (!(error instanceof UnsupportedSnapshotSchemaVersionError))
+        throw error;
+      sourceSnapshotNote =
+        "The latest saved snapshot uses an unsupported schema; this plan uses the current live values instead.";
+    }
   }
   const plan = createChangePlan(database, {
     guildId,
@@ -1175,6 +1509,7 @@ async function saveAndReply(
     roles: roleNames,
   });
   if (sourceSnapshotNote) messages.push(sourceSnapshotNote);
+  if (additionalNote) messages.push(additionalNote);
   if (result.noOpChannelIds.length > 0) {
     messages.push(
       ...formatNoOpMessages(result.noOpChannelIds, channelNames, false),
