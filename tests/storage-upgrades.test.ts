@@ -32,11 +32,11 @@ function createVersionSevenDatabase(databasePath: string): void {
   const database = new DatabaseSync(databasePath);
   try {
     database.exec(`
-      CREATE TABLE schema_migrations (
-        version INTEGER PRIMARY KEY,
-        name TEXT NOT NULL,
-        applied_at TEXT NOT NULL
-      );
+    CREATE TABLE IF NOT EXISTS schema_migrations (
+      version INTEGER PRIMARY KEY,
+      name TEXT NOT NULL,
+      applied_at TEXT NOT NULL
+    );
     `);
     for (const migration of migrations.slice(0, 7)) {
       migration.up(database);
@@ -124,6 +124,10 @@ test(
     } finally {
       upgraded.close();
     }
+    await createDatabaseBackup(
+      databasePath,
+      join(directory, "upgraded-schema.sqlite"),
+    );
   }),
 );
 
