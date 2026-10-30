@@ -83,7 +83,7 @@ Exit gate: clean checkout can be configured and run using the README; CI passes;
 | 07 | [Define supported settings matrix](supported-settings.md) | Every field has API source, read/write support, required permissions, feature restrictions, and reversal support |
 | 08 | [x] Implement configuration snapshots | `/server inspect` reads supported guild fields, roles, categories, channels, and overrides; snapshot has timestamp and schema version |
 | 09 | [x] [Implement permission calculations](https://github.com/wavphile/discord_bot/issues/15) | `/permissions explain` shows why a member can view/send in a channel, including owner/admin cases, role aggregation, overwrites, and implicit restrictions |
-| 10 | Add snapshot comparison | `/server diff` identifies additions, removals, and changed supported fields between snapshots; inaccessible data is clearly marked |
+| 10 | [Add snapshot comparison](https://github.com/wavphile/discord_bot/issues/17) | `/server diff` identifies additions, removals, and changed supported fields between snapshots; inaccessible data is clearly marked |
 
 M1-08 server acceptance passed on October 30, 2026: `/server inspect` returned a private summary and limited-visibility notice in `#bots`, and the SQLite database retained the captured snapshot after the command completed.
 
