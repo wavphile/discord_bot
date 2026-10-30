@@ -116,6 +116,8 @@ $applicationId = Get-DotEnvValue -Text $envText -Name "DISCORD_APPLICATION_ID"
 $testGuildId = Get-DotEnvValue -Text $envText -Name "DISCORD_DEV_GUILD_ID"
 $allowedUserValue = Get-DotEnvValue -Text $envText -Name "DISCORD_ALLOWED_USER_IDS"
 $allowedRoleValue = Get-DotEnvValue -Text $envText -Name "DISCORD_ALLOWED_ROLE_IDS"
+$approverUserValue = Get-DotEnvValue -Text $envText -Name "DISCORD_APPROVER_USER_IDS"
+$approverRoleValue = Get-DotEnvValue -Text $envText -Name "DISCORD_APPROVER_ROLE_IDS"
 $databasePath = Get-DotEnvValue -Text $envText -Name "DATABASE_PATH"
 if ([string]::IsNullOrWhiteSpace($botToken) -or $botToken -like "replace-with-*") {
     throw "Set DISCORD_BOT_TOKEN in .env to your development bot token. The token will not be printed."
@@ -128,8 +130,12 @@ if ($testGuildId -notmatch '^\d{17,20}$') {
 }
 if ($null -eq $allowedUserValue) { $allowedUserValue = "" }
 if ($null -eq $allowedRoleValue) { $allowedRoleValue = "" }
+if ($null -eq $approverUserValue) { $approverUserValue = "" }
+if ($null -eq $approverRoleValue) { $approverRoleValue = "" }
 $allowedUserIds = @(Get-SnowflakeList -Value $allowedUserValue -Name "DISCORD_ALLOWED_USER_IDS")
 $allowedRoleIds = @(Get-SnowflakeList -Value $allowedRoleValue -Name "DISCORD_ALLOWED_ROLE_IDS")
+$approverUserIds = @(Get-SnowflakeList -Value $approverUserValue -Name "DISCORD_APPROVER_USER_IDS")
+$approverRoleIds = @(Get-SnowflakeList -Value $approverRoleValue -Name "DISCORD_APPROVER_ROLE_IDS")
 if ($allowedUserIds.Count -eq 0 -and $allowedRoleIds.Count -eq 0) {
     throw "Set at least one test user ID or role ID in DISCORD_ALLOWED_USER_IDS or DISCORD_ALLOWED_ROLE_IDS in .env."
 }
@@ -158,6 +164,8 @@ Write-Host "Development application ID: $applicationId"
 Write-Host "Private test server ID:     $testGuildId"
 Write-Host "Allowed test users:         $($allowedUserIds.Count)"
 Write-Host "Allowed test roles:         $($allowedRoleIds.Count)"
+Write-Host "Plan approver users:        $($approverUserIds.Count)"
+Write-Host "Plan approver roles:        $($approverRoleIds.Count)"
 Write-Host "Database path:              $databasePath"
 Write-Host "Confirm these are your development app, private test server, and test database."
 
@@ -172,6 +180,8 @@ $environmentNames = @(
     "DISCORD_DEV_GUILD_ID",
     "DISCORD_ALLOWED_USER_IDS",
     "DISCORD_ALLOWED_ROLE_IDS",
+    "DISCORD_APPROVER_USER_IDS",
+    "DISCORD_APPROVER_ROLE_IDS",
     "DATABASE_PATH",
     "NODE_ENV"
 )
@@ -187,6 +197,8 @@ try {
     [Environment]::SetEnvironmentVariable("DISCORD_DEV_GUILD_ID", $testGuildId, "Process")
     [Environment]::SetEnvironmentVariable("DISCORD_ALLOWED_USER_IDS", ($allowedUserIds -join ","), "Process")
     [Environment]::SetEnvironmentVariable("DISCORD_ALLOWED_ROLE_IDS", ($allowedRoleIds -join ","), "Process")
+    [Environment]::SetEnvironmentVariable("DISCORD_APPROVER_USER_IDS", ($approverUserIds -join ","), "Process")
+    [Environment]::SetEnvironmentVariable("DISCORD_APPROVER_ROLE_IDS", ($approverRoleIds -join ","), "Process")
     [Environment]::SetEnvironmentVariable("DATABASE_PATH", $databasePath, "Process")
     [Environment]::SetEnvironmentVariable("NODE_ENV", "development", "Process")
 
