@@ -1,10 +1,4 @@
-import {
-  Client,
-  Events,
-  GatewayIntentBits,
-  MessageFlags,
-  type BaseInteraction,
-} from "discord.js";
+import { Client, Events, MessageFlags, type BaseInteraction } from "discord.js";
 import { env } from "./config/env.js";
 import { createAiProvider } from "./ai/index.js";
 import {
@@ -22,8 +16,18 @@ import {
 } from "./discord/plan-job-runner.js";
 import { logger } from "./observability/logger.js";
 import { getSchemaVersion, openDatabase } from "./storage/database.js";
+import {
+  createGatewayIntents,
+  isDisallowedGatewayIntentsError,
+} from "./discord/gateway-capabilities.js";
 
-const client = new Client({ intents: [GatewayIntentBits.Guilds] });
+const gatewayCapabilities = {
+  guildMembers: env.DISCORD_ENABLE_GUILD_MEMBERS_INTENT,
+  messageContent: env.DISCORD_ENABLE_MESSAGE_CONTENT_INTENT,
+};
+const client = new Client({
+  intents: createGatewayIntents(gatewayCapabilities),
+});
 const aiProvider = createAiProvider(env);
 const database = openDatabase(env.DATABASE_PATH);
 const schemaVersion = getSchemaVersion(database);
@@ -99,7 +103,11 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
   try {
     if (interaction.commandName === "health") {
-      await executeHealthCommand(interaction, schemaVersion);
+      await executeHealthCommand(
+        interaction,
+        schemaVersion,
+        gatewayCapabilities,
+      );
     } else if (interaction.commandName === "ask") {
       await executeAskCommand(interaction, database, aiProvider, {
         maxInputTokens: env.AI_MAX_INPUT_TOKENS,
@@ -185,6 +193,11 @@ try {
   await client.login(env.DISCORD_BOT_TOKEN);
 } catch (error) {
   logger.error("discord.login.failed", error);
+  if (isDisallowedGatewayIntentsError(error)) {
+    logger.error("discord.login.disallowed_intents", error, {
+      gatewayIntentSetupHint: true,
+    });
+  }
   database.close();
   process.exitCode = 1;
 }

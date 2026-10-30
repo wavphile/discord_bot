@@ -4,6 +4,7 @@ type LogContext = Readonly<{
   schemaVersion?: number;
   signal?: "SIGINT" | "SIGTERM";
   userId?: string;
+  gatewayIntentSetupHint?: boolean;
 }>;
 
 type LogLevel = "info" | "warn" | "error";
@@ -24,6 +25,10 @@ function safeContext(context: LogContext): Record<string, string | number> {
     result["schemaVersion"] = context.schemaVersion as number;
   }
   if (context.signal) result["signal"] = context.signal;
+  if (context.gatewayIntentSetupHint === true) {
+    result["hint"] =
+      "Enable the requested privileged intents in the Discord Developer Portal, then restart the bot.";
+  }
 
   return result;
 }

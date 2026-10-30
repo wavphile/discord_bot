@@ -140,13 +140,15 @@ M3-19 automated hardening passed on October 30, 2026: all 105 tests, type checki
 
 | ID | Task | Acceptance criteria |
 | --- | --- | --- |
-| 20 | Add privileged-intent capability checks | Setup describes required intents; unavailable member/message capabilities return an actionable explanation |
+| 20 | [x] [Add privileged-intent capability checks](https://github.com/wavphile/discord_bot/issues/37) | Setup describes required intents; unavailable member/message capabilities return an actionable explanation |
 | 21 | Add member questions | Explain roles and permissions for authorized targets; limit activity claims to observed, dated data; enforce server boundaries |
 | 22 | Add opt-in message retrieval | Admin config selects permitted channels, date/count limits, retention, and model provider; queries also check requester's current channel/thread access |
 | 23 | Add source-linked summaries | Summaries include message links and retrieval bounds; private responses do not reveal inaccessible content; source text cannot authorize tools |
 | 24 | Add deletion and retention controls | Raw-message persistence is off by default; configured retention runs automatically; purge handles stored content and derived indexes; deletion/edit events are reconciled where supported |
 
 Exit gate: member without access to a restricted channel cannot obtain its content through answers, citations, cached context, or summaries. Document how external providers process submitted data before enabling this feature.
+
+M4-20 adds strict opt-in flags for Server Members and Message Content intents, leaves both off by default, reports configured intent requests in `/health`, and provides actionable capability explanations for later member/message features. Disallowed-intent login failures receive a fixed Developer Portal hint without logging error text or credentials. Automated validation passed with 112 tests, type checking, production build, and changed-file formatting. The live `/health` output and enabling a privileged intent in the test application's Developer Portal remain unverified; see [testing.md](testing.md).
 
 ### Milestone M5 — deployment and release hardening (`v1.0.0`)
 
