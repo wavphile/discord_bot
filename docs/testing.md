@@ -71,7 +71,25 @@ git pull --ff-only
 
 The PR's guild-scoped command registration updates commands in the configured test server immediately. It does not change commands in other servers. `.env` is ignored by Git and is preserved when switching commits.
 
-The structured change-plan storage work is not exposed as a Discord command yet. Its preview is a pure formatter and makes no Discord API calls. `npm test` covers plan validation, expiry, snapshot scoping, ordered persistence, transaction rollback, and bounded preview output; `/health` confirms the test database migrated to schema v3. Plan creation and review become user-facing in the later batch-operation steps.
+### Try safe change-plan previews
+
+The `/plan` commands save an exact, short-lived preview in SQLite and reply privately. They read the selected channels' current values and do not modify Discord settings. Plans expire after 30 minutes; approval and execution are later project-plan work and are not available yet.
+
+Try each command in the private test server:
+
+```text
+/plan topic channels:#bots value:"A temporary preview topic"
+/plan slowmode channels:#bots seconds:5
+/plan permission channels:#bots role:@TestRole permission:view_channel state:allow
+```
+
+Replace `#bots` with a comma-separated list of channel mentions or IDs. For the role example, choose an existing custom unmanaged role; `@everyone` and managed roles are rejected. Permission choices are `view_channel`, `send_messages`, and `read_message_history` on ordinary text channels, plus `view_channel`, `connect`, and `speak` on voice channels. Use `state:inherit` to preview clearing only the selected permission bit. Use `value:CLEAR` to preview removing a topic.
+
+Each response should be ephemeral and identify every channel and role by name and ID, show the before/after values, state the expiry, and explicitly say no Discord changes were applied. A target already at the requested value is omitted from the plan and listed as a no-op; if all targets are no-ops, no plan is saved. The selected channel list is resolved once, capped at 25, and cannot expand after saving. Invalid, inaccessible, cross-server, or unsupported targets reject the whole request before a plan is stored.
+
+As of October 30, 2026, a live test-server smoke test passed for `/plan slowmode channels:#bots seconds:5`: the private preview resolved `#bots`, showed slowmode `0` before and `5` after, saved a preview expiring in 30 minutes, and confirmed no Discord changes were applied. Live smoke tests for `/plan topic` and `/plan permission` are still pending; their automated checks pass, but they should be tried in Discord before a later release that depends on them. The permission test requires a custom unmanaged role.
+
+The permission preview preserves all existing overwrite bits while changing only the selected bit. The commands do not require permission to write to Discord because they perform no Discord writes. `npm test` covers selector parsing/resolution, visibility/type checks, no-op filtering, bit preservation, all-or-nothing planning, and private preview behavior.
 
 ### Try the storage migration and restart persistence
 

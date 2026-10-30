@@ -8,6 +8,7 @@ import {
 import { env } from "./config/env.js";
 import { authorizeInteraction } from "./core/authorization.js";
 import { executeHealthCommand } from "./discord/commands/health.js";
+import { executePlanCommand } from "./discord/commands/plan.js";
 import { executePermissionsCommand } from "./discord/commands/permissions.js";
 import { executeServerCommand } from "./discord/commands/server.js";
 import { logger } from "./observability/logger.js";
@@ -64,6 +65,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
   try {
     if (interaction.commandName === "health") {
       await executeHealthCommand(interaction, schemaVersion);
+    } else if (interaction.commandName === "plan") {
+      await executePlanCommand(interaction, database);
     } else if (interaction.commandName === "server") {
       await executeServerCommand(interaction, client, database);
     } else if (interaction.commandName === "permissions") {
