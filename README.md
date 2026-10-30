@@ -15,6 +15,8 @@ To try a pull request against a safe Discord test server, follow [the testing gu
 
 `/permissions explain` privately checks **View Channel**, **Send Messages**, and the separate **Send Messages in Threads** permission for a selected member in a text or announcement channel. It is read-only. See [permission calculation details and limitations](docs/permissions.md).
 
+`/ask` accepts a channel, a member, or both. A member-only question uses a fresh role and permission read without requiring a saved channel snapshot. The bot does not collect message activity; questions about message history are declined until a dated activity source exists.
+
 Build the production JavaScript with `npm run build`; run it with `npm start`.
 
 ## Docker Compose

@@ -141,7 +141,7 @@ M3-19 automated hardening passed on October 30, 2026: all 105 tests, type checki
 | ID | Task | Acceptance criteria |
 | --- | --- | --- |
 | 20 | [x] [Add privileged-intent capability checks](https://github.com/wavphile/discord_bot/issues/37) | Setup describes required intents; unavailable member/message capabilities return an actionable explanation |
-| 21 | Add member questions | Explain roles and permissions for authorized targets; limit activity claims to observed, dated data; enforce server boundaries |
+| 21 | [x] [Add bounded member questions](https://github.com/wavphile/discord_bot/issues/39) | Explain roles and permissions for authorized targets; limit activity claims to observed, dated data; enforce server boundaries |
 | 22 | Add opt-in message retrieval | Admin config selects permitted channels, date/count limits, retention, and model provider; queries also check requester's current channel/thread access |
 | 23 | Add source-linked summaries | Summaries include message links and retrieval bounds; private responses do not reveal inaccessible content; source text cannot authorize tools |
 | 24 | Add deletion and retention controls | Raw-message persistence is off by default; configured retention runs automatically; purge handles stored content and derived indexes; deletion/edit events are reconciled where supported |
@@ -149,6 +149,8 @@ M3-19 automated hardening passed on October 30, 2026: all 105 tests, type checki
 Exit gate: member without access to a restricted channel cannot obtain its content through answers, citations, cached context, or summaries. Document how external providers process submitted data before enabling this feature.
 
 M4-20 adds strict opt-in flags for Server Members and Message Content intents, leaves both off by default, reports configured intent requests in `/health`, and provides actionable capability explanations for later member/message features. Disallowed-intent login failures receive a fixed Developer Portal hint without logging error text or credentials. Validation passed with 112 tests, type checking, production build, changed-file formatting, GitHub Actions, and the PR #38 tryout. The tryout registered five guild commands and started the bot with schema v7 and both privileged intents disabled. The live `/health` output and enabling a privileged intent in the test application's Developer Portal remain unverified; see [testing.md](testing.md).
+
+M4-21 extends `/ask` to accept a same-server member without a channel snapshot, supplying current roles, role permissions, join date when available, timeout state, and observation time. Channel-specific questions retain current requester access checks and snapshot bounds. Message/history questions are declined before provider calls; member evidence is not persisted and is bounded to 32,000 characters. The 121-test suite, type checking, production build, changed-file formatting, GitHub Actions, and PR #40 startup tryout passed; the tryout registered five guild commands and started with SQLite schema v7 and both privileged intents disabled. A live `/server inspect` and channel `/ask` could not be submitted because the Discord `#bots` composer remained in an oversized-draft state. No Discord interaction or server change was made, so the live server snapshot, channel and member-only answers, and activity refusal still need testing; see [testing.md](testing.md).
 
 ### Milestone M5 — deployment and release hardening (`v1.0.0`)
 

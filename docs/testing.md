@@ -223,14 +223,18 @@ The workflow covers formatting, TypeScript type checking, permission-calculation
 
 ### Ask a configuration question
 
-Capture a recent snapshot, then ask about a text or announcement channel that you can currently view:
+Ask about a text or announcement channel that you can currently view, or select one member without a channel:
 
 ```text
 /server inspect
 /ask question:"Why can this member view this channel?" channel:#bots member:@TestMember
+/ask question:"What roles and permissions does this member have?" member:@TestMember
+/ask question:"What did this member say in their latest message?" member:@TestMember
 ```
 
-The command is allowlisted, guild-only, and replies ephemerally. It requires the requester to have current View Channel access. It uses only the selected channel's snapshot data plus the selected member's current role membership; it omits unrelated channel settings and other members' overwrites. Snapshots older than 24 hours, missing snapshots, missing channel data, or role definitions absent from the snapshot require a new `/server inspect`. The answer includes the snapshot ID and capture time, member-role read time, a limited-visibility notice, and a deterministic permission calculation. The model has no tools and cannot make server changes. Mock output is explicitly labeled as a test response.
+The command is allowlisted, guild-only, and replies ephemerally. A channel question requires the requester to have current View Channel access and uses only that selected channel's snapshot data plus the selected member's current role membership; unrelated channel settings and other members' overwrites are omitted. Snapshots older than 24 hours, missing snapshots, missing channel data, or role definitions absent from the snapshot require a new `/server inspect`. The response includes the snapshot ID and capture time, member-role read time, a limited-visibility notice, and a deterministic permission calculation.
+
+A member-only question uses a fresh read of that same-server member's current roles, role permissions, join date when available, and timeout state, with an observation timestamp. It does not need a saved channel snapshot or enable a privileged Gateway intent. No messages are retrieved or stored. The third example should be declined before a provider request, with a reply that activity is not collected. The model has no tools and cannot make server changes. Mock output is explicitly labeled as a test response.
 
 The default `AI_PROVIDER=mock` produces deterministic local output and makes no network request. To receive a model answer, set `AI_PROVIDER=openai` and `OPENAI_API_KEY` in the ignored `.env`; `OPENAI_BASE_URL` and `OPENAI_MODEL` are documented in [AI provider configuration](ai-providers.md). Keep the key out of Git, logs, Discord, and Codex. See [provider data handling](ai-providers.md) before sending server configuration to a hosted service.
 
@@ -239,6 +243,10 @@ The default `AI_PROVIDER=mock` produces deterministic local output and makes no 
 When the OpenAI adapter is selected, developer instructions and user input are sent to the configured endpoint for token counting and generation. Generation requests use the Responses API with `store: false`; this is not a zero-retention guarantee for all provider data. Review [OpenAI data controls](https://developers.openai.com/api/docs/guides/your-data) and your organization's requirements before enabling a feature that sends server configuration. See [OpenAI text generation](https://developers.openai.com/api/docs/guides/text) and [OpenAI token counting](https://developers.openai.com/api/docs/guides/token-counting) for the endpoints used by the adapter.
 
 As of October 30, 2026, M3-17 automated validation passed: 86 tests, type checking, production build, changed-file formatting, GitHub Actions, and the PR tryout. The tryout registered five guild commands and started the bot with SQLite schema v7. The live Discord `/ask` smoke test in `#bots` remains pending. Run `/server inspect`, then `/ask question:"What is the saved topic and slowmode for this channel?" channel:#bots`; with `AI_PROVIDER=mock`, expect a private, clearly labeled test response with snapshot provenance and no hosted API call. Also try a member-specific permission question with an appropriate test member. The M3-17 code is merged, but these interactive behaviors and a real OpenAI response have not been verified in Discord.
+
+M4-21 adds the member-only question path. Unit tests verify same-server roles and permissions, dated membership evidence, activity refusal before provider calls, and cross-server rejection. The live member-profile and channel-specific `/ask` responses remain unverified in Discord; no activity data should be expected until a later message-retrieval feature has an approved scope and a dated source.
+
+As of October 30, 2026, the M4-21 automated suite passes with 121 tests, type checking, production build, and changed-file formatting. The PR tryout fetched PR #40, registered five guild commands, and started the bot with SQLite schema v7 and both privileged-intent flags disabled. The bot appeared online in the test server. The authorized `/server inspect` and channel-specific `/ask question:"What is the saved topic and slowmode for this channel?" channel:#bots` commands were not submitted: the Discord UI automation could not reliably focus the `#bots` composer, which showed an oversized unsent draft. No Discord interaction or server change was made. Live server inspection, channel and member-only answers, and activity refusal therefore remain unverified. With `AI_PROVIDER=mock`, any live `/ask` response is labeled test output and is not factual model content; continue with the PR's **Try it** steps when the composer is usable.
 
 ### Turn a configuration suggestion into a plan
 
