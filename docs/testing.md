@@ -36,6 +36,8 @@ Keep the bot running, open the test server, and follow the pull request's **Try 
 
 Run `/server inspect` a second time, then `/server diff`. The private comparison should show the two capture times and any differences in supported server settings, roles, returned channels, and channel permission overwrites. The comparison always warns that channel visibility is limited: a channel returned in only one snapshot may have been added or deleted, or may have become visible or inaccessible to the bot. Its presence alone does not establish which. Details for a channel that was unviewable in either snapshot are omitted. With fewer than two snapshots, `/server diff` asks you to capture another one.
 
+As of October 30, 2026, the PR tryout registered the command and `/server inspect` captured a second snapshot, but a live `/server diff` response has not been confirmed. Run it manually after starting this PR or a version containing the change; the corresponding unit tests and GitHub Actions checks pass.
+
 Run `/permissions explain` with a test member and a text or announcement channel. Its private response should show **View Channel**, **Send Messages**, and **Send Messages in Threads** separately, with the role and channel-overwrite rules behind each result. It is read-only. The command checks the selected member's current roles and channel overwrites; thread membership is outside this check. See [permission calculation details](permissions.md). If only the server owner account is available, the owner-bypass case can be tried; role and overwrite combinations remain covered by unit tests until another test member is available.
 
 Press Ctrl+C to stop the local bot.

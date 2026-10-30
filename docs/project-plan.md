@@ -83,7 +83,7 @@ Exit gate: clean checkout can be configured and run using the README; CI passes;
 | 07 | [Define supported settings matrix](supported-settings.md) | Every field has API source, read/write support, required permissions, feature restrictions, and reversal support |
 | 08 | [x] Implement configuration snapshots | `/server inspect` reads supported guild fields, roles, categories, channels, and overrides; snapshot has timestamp and schema version |
 | 09 | [x] [Implement permission calculations](https://github.com/wavphile/discord_bot/issues/15) | `/permissions explain` shows why a member can view/send in a channel, including owner/admin cases, role aggregation, overwrites, and implicit restrictions |
-| 10 | [Add snapshot comparison](https://github.com/wavphile/discord_bot/issues/17) | `/server diff` identifies additions, removals, and changed supported fields between snapshots; inaccessible data is clearly marked |
+| 10 | [x] [Add snapshot comparison](https://github.com/wavphile/discord_bot/issues/17) | `/server diff` identifies additions, removals, and changed supported fields between snapshots; inaccessible data is clearly marked |
 
 M1-08 server acceptance passed on October 30, 2026: `/server inspect` returned a private summary and limited-visibility notice in `#bots`, and the SQLite database retained the captured snapshot after the command completed.
 
@@ -91,7 +91,9 @@ M1-09 acceptance passed on October 30, 2026: nine permission-calculation unit te
 
 M1-09 remaining Discord-side check: the non-owner role and overwrite comparison could not be run because a second test account is unavailable. Unit tests cover the owner, Administrator, role aggregation, overwrite precedence, and implicit restriction cases. Re-run the client comparison when another test account is available.
 
-M1 exit gate: M1-09's owner case and unit checks passed. The representative non-owner role and overwrite comparison remains pending as recorded above; the remaining M1 work can proceed while that test account is unavailable.
+M1-10 implementation passed on October 30, 2026: 11 new snapshot-diff and storage tests passed; type checking, build, changed-file formatting, and the GitHub Actions `Validate` workflow passed. `scripts/try-pr.ps1 -PullRequestNumber 18` registered the development commands, and `/server inspect` captured another snapshot in `#bots`. The live `/server diff` response remains pending; follow the steps and status note in [testing.md](testing.md).
+
+M1 exit gate: M1-09's owner case and unit checks passed. The representative non-owner role and overwrite comparison remains pending, as does the live `/server diff` response check. The remaining M1/M2 work can proceed while those checks are unavailable.
 
 ### Milestone M2 — reliable batch administration (`v0.3.0`)
 
