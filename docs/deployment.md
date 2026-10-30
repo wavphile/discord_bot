@@ -55,7 +55,7 @@ docker compose up -d --no-build
 docker compose logs --tail=100 bot
 ```
 
-Wait for `docker compose ps` to report the service as healthy. The image health check stays private to the container and requires both a connected Discord client and a responsive SQLite database. For backup, restore, disk-space, and token-rotation procedures, see [operations.md](operations.md).
+Wait for `docker compose ps` to report the service as healthy. The image health check stays private to the container and requires both a connected Discord client and a responsive SQLite database. For backup, restore, disk-space, token-rotation, and release rollback procedures, see [operations.md](operations.md) and [upgrades.md](upgrades.md).
 
 In the test server, run `/health` and record whether the bot responds and reports its SQLite schema version. Check that it remains connected after a restart:
 
