@@ -21,6 +21,8 @@ const envSchema = z.object({
   DISCORD_DEV_GUILD_ID: snowflake,
   DISCORD_ALLOWED_USER_IDS: snowflakeList,
   DISCORD_ALLOWED_ROLE_IDS: snowflakeList,
+  DISCORD_APPROVER_USER_IDS: snowflakeList,
+  DISCORD_APPROVER_ROLE_IDS: snowflakeList,
   DATABASE_PATH: z.string().min(1).default("./data/discord-bot.sqlite"),
   NODE_ENV: z
     .enum(["development", "test", "production"])

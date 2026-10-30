@@ -73,10 +73,10 @@ function createInput(
   };
 }
 
-test("migration 3 creates the change-plan storage schema", () => {
+test("migration 4 adds approval metadata to the change-plan schema", () => {
   const database = openDatabase(":memory:");
   try {
-    assert.equal(getSchemaVersion(database), 3);
+    assert.equal(getSchemaVersion(database), 4);
     assert.equal(
       database
         .prepare(

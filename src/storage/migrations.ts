@@ -87,4 +87,15 @@ export const migrations: readonly Migration[] = [
       `);
     },
   },
+  {
+    version: 4,
+    name: "add_change_plan_approval_metadata",
+    up(database) {
+      database.exec(`
+        ALTER TABLE change_plans ADD COLUMN submitted_at TEXT;
+        ALTER TABLE change_plans ADD COLUMN decision_by TEXT;
+        ALTER TABLE change_plans ADD COLUMN decision_at TEXT;
+      `);
+    },
+  },
 ];

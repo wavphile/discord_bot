@@ -9,7 +9,8 @@ Use a separate Discord application and a private test server for development. Ke
 3. In the portal's installation settings, enable **Guild Install** and use the `bot` and `applications.commands` scopes. Install the app only into the test server. The bot account must join the server; grant it **View Channel** only in the channels to inspect. `/health` does not need bot permissions, but `/server inspect` needs the bot to access the server configuration.
 4. Copy the bot token and application ID. In Discord, enable Developer Mode, then copy the test server ID and your user ID. Copy role IDs too if you want to authorize a test role.
 5. In the repository root, copy `.env.example` to `.env` (`Copy-Item .env.example .env` in PowerShell, or `cp .env.example .env`) and fill in `DISCORD_BOT_TOKEN`, `DISCORD_APPLICATION_ID`, and `DISCORD_DEV_GUILD_ID`.
-6. Set `DISCORD_ALLOWED_USER_IDS` to your user ID and optionally `DISCORD_ALLOWED_ROLE_IDS` to comma-separated test role IDs. At least one allowlisted user or role is required; an empty allowlist denies every command. Keep the allowlist narrow and do not add `@everyone`.
+6. Set `DISCORD_ALLOWED_USER_IDS` to your user ID and optionally `DISCORD_ALLOWED_ROLE_IDS` to comma-separated test role IDs. At least one allowlisted user or role is required for ordinary commands; an empty allowlist denies them. Keep the allowlist narrow and do not add `@everyone`.
+7. Set `DISCORD_APPROVER_USER_IDS` and/or `DISCORD_APPROVER_ROLE_IDS` to a separate approver user or role list. Only these users or roles can review, approve, or reject plans; approvers can use those approval subcommands without being on the ordinary command allowlist. The requester cannot approve their own plan. Leave both values empty to disable plan decisions.
 
 Administrative interactions are accepted only in `DISCORD_DEV_GUILD_ID`. The bot checks the requester against the configured user and role IDs before dispatching any interaction. DMs and other servers are denied. Do not enable privileged intents until a feature needs them. Review the permissions and data access for each new feature before trying it.
 
@@ -32,7 +33,7 @@ npm run deploy:commands
 npm run dev
 ```
 
-Keep the bot running, open the test server, and follow the pull request's **Try it** steps. Run `/health`; it should privately report that the bot is responding and SQLite schema v3 is ready. Run `/server inspect`; it should privately report a snapshot ID, capture time, role/category/channel/overwrite counts, and limited channel visibility. The command stores a configuration snapshot in SQLite. It does not change server settings and is not a complete server backup.
+Keep the bot running, open the test server, and follow the pull request's **Try it** steps. Run `/health`; it should privately report that the bot is responding and SQLite schema v4 is ready. Run `/server inspect`; it should privately report a snapshot ID, capture time, role/category/channel/overwrite counts, and limited channel visibility. The command stores a configuration snapshot in SQLite. It does not change server settings and is not a complete server backup.
 
 Run `/server inspect` a second time, then `/server diff`. The private comparison should show the two capture times and any differences in supported server settings, roles, returned channels, and channel permission overwrites. The comparison always warns that channel visibility is limited: a channel returned in only one snapshot may have been added or deleted, or may have become visible or inaccessible to the bot. Its presence alone does not establish which. Details for a channel that was unviewable in either snapshot are omitted. With fewer than two snapshots, `/server diff` asks you to capture another one.
 
@@ -73,7 +74,7 @@ The PR's guild-scoped command registration updates commands in the configured te
 
 ### Try safe change-plan previews
 
-The `/plan` commands save an exact, short-lived preview in SQLite and reply privately. They read the selected channels' current values and do not modify Discord settings. Plans expire after 30 minutes; approval and execution are later project-plan work and are not available yet.
+The `/plan` preview commands save an exact, short-lived preview in SQLite and reply privately. They read the selected channels' current values and do not modify Discord settings. Plans expire after 30 minutes. The preview displays a full plan UUID for the later approval workflow.
 
 Try each command in the private test server:
 
@@ -86,6 +87,21 @@ Try each command in the private test server:
 Replace `#bots` with a comma-separated list of channel mentions or IDs. For the role example, choose an existing custom unmanaged role; `@everyone` and managed roles are rejected. Permission choices are `view_channel`, `send_messages`, and `read_message_history` on ordinary text channels, plus `view_channel`, `connect`, and `speak` on voice channels. Use `state:inherit` to preview clearing only the selected permission bit. Use `value:CLEAR` to preview removing a topic.
 
 Each response should be ephemeral and identify every channel and role by name and ID, show the before/after values, state the expiry, and explicitly say no Discord changes were applied. A target already at the requested value is omitted from the plan and listed as a no-op; if all targets are no-ops, no plan is saved. The selected channel list is resolved once, capped at 25, and cannot expand after saving. Invalid, inaccessible, cross-server, or unsupported targets reject the whole request before a plan is stored.
+
+### Request and review plan approval
+
+The original requester can submit a current preview for approval. Only the separate approver allowlist can inspect its private details and approve or reject it:
+
+```text
+/plan submit plan_id:<full-plan-uuid>
+/plan review plan_id:<full-plan-uuid>
+/plan approve plan_id:<full-plan-uuid>
+/plan reject plan_id:<full-plan-uuid>
+```
+
+Approval runs a fresh, read-only check of the requester's current authorization, the bot's channel permissions and role hierarchy, and every planned value. If any target cannot be read or written, or its current value differs from the preview, the whole plan becomes conflicted. The requester cannot approve their own plan. A successful approval only records approval; applying changes is a later project-plan step. The eventual executor must repeat the same preflight immediately before each Discord write.
+
+As of October 30, 2026, a second test account is unavailable. Unit and storage tests cover separate authorization, self-approval rejection, expiry, transitions, and conflicts. Live approval by another account remains pending; the feature has no Discord settings write path yet.
 
 As of October 30, 2026, a live test-server smoke test passed for `/plan slowmode channels:#bots seconds:5`: the private preview resolved `#bots`, showed slowmode `0` before and `5` after, saved a preview expiring in 30 minutes, and confirmed no Discord changes were applied. Live smoke tests for `/plan topic` and `/plan permission` are still pending; their automated checks pass, but they should be tried in Discord before a later release that depends on them. The permission test requires a custom unmanaged role.
 

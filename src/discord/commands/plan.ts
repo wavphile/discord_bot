@@ -9,6 +9,12 @@ import {
 } from "discord.js";
 import type { DatabaseSync } from "node:sqlite";
 import {
+  authorizeInteraction,
+  authorizePlanApprover,
+  type ApprovalPolicy,
+  type AuthorizationPolicy,
+} from "../../core/authorization.js";
+import {
   buildRoleOverwriteChanges,
   buildSlowmodeChanges,
   buildTopicChanges,
@@ -25,7 +31,16 @@ import {
   formatChangePlanPreview,
   type ChangePlanChange,
 } from "../../features/change-plans.js";
-import { createChangePlan } from "../../storage/change-plans.js";
+import { preflightChangePlanOnDiscord } from "../change-plan-preflight.js";
+import {
+  approveChangePlan,
+  ChangePlanTransitionError,
+  createChangePlan,
+  getChangePlan,
+  markChangePlanConflicted,
+  rejectChangePlan,
+  submitChangePlanForApproval,
+} from "../../storage/change-plans.js";
 import {
   getLatestConfigurationSnapshots,
   UnsupportedSnapshotSchemaVersionError,
@@ -33,9 +48,14 @@ import {
 
 const maxSelectorLength = 1_024;
 
+export type PlanCommandContext = Readonly<{
+  requesterAuthorization: AuthorizationPolicy;
+  approvalAuthorization: ApprovalPolicy;
+}>;
+
 export const planCommand = new SlashCommandBuilder()
   .setName("plan")
-  .setDescription("Preview a bounded set of server configuration changes.")
+  .setDescription("Preview and manage bounded server change plans.")
   .addSubcommand((subcommand) =>
     subcommand
       .setName("topic")
@@ -116,11 +136,64 @@ export const planCommand = new SlashCommandBuilder()
           )
           .setRequired(true),
       ),
+  )
+  .addSubcommand((subcommand) =>
+    subcommand
+      .setName("submit")
+      .setDescription("Submit your saved plan for approval.")
+      .addStringOption((option) =>
+        option
+          .setName("plan_id")
+          .setDescription("The full plan UUID shown in the private preview.")
+          .setMinLength(36)
+          .setMaxLength(36)
+          .setRequired(true),
+      ),
+  )
+  .addSubcommand((subcommand) =>
+    subcommand
+      .setName("review")
+      .setDescription("Privately inspect a plan awaiting your decision.")
+      .addStringOption((option) =>
+        option
+          .setName("plan_id")
+          .setDescription("The full plan UUID.")
+          .setMinLength(36)
+          .setMaxLength(36)
+          .setRequired(true),
+      ),
+  )
+  .addSubcommand((subcommand) =>
+    subcommand
+      .setName("approve")
+      .setDescription("Approve a plan after a fresh read-only preflight.")
+      .addStringOption((option) =>
+        option
+          .setName("plan_id")
+          .setDescription("The full plan UUID.")
+          .setMinLength(36)
+          .setMaxLength(36)
+          .setRequired(true),
+      ),
+  )
+  .addSubcommand((subcommand) =>
+    subcommand
+      .setName("reject")
+      .setDescription("Reject a plan awaiting approval.")
+      .addStringOption((option) =>
+        option
+          .setName("plan_id")
+          .setDescription("The full plan UUID.")
+          .setMinLength(36)
+          .setMaxLength(36)
+          .setRequired(true),
+      ),
   );
 
 export async function executePlanCommand(
   interaction: ChatInputCommandInteraction,
   database: DatabaseSync,
+  context?: PlanCommandContext,
 ): Promise<void> {
   const guild = interaction.guild;
   if (!guild) {
@@ -144,8 +217,28 @@ export async function executePlanCommand(
     }
     if (subcommand === "permission") {
       await createPermissionPreview(interaction, database);
+      return;
+    }
+    if (subcommand === "submit") {
+      await submitPlan(interaction, database, context);
+      return;
+    }
+    if (subcommand === "review") {
+      await reviewPlan(interaction, database, context);
+      return;
+    }
+    if (subcommand === "approve") {
+      await approvePlan(interaction, database, context);
+      return;
+    }
+    if (subcommand === "reject") {
+      await rejectPlan(interaction, database, context);
     }
   } catch (error) {
+    if (error instanceof ChangePlanTransitionError) {
+      await editPrivateReply(interaction, error.message);
+      return;
+    }
     if (error instanceof TypeError || error instanceof RangeError) {
       await editPrivateReply(interaction, error.message);
       return;
@@ -282,6 +375,218 @@ async function createPermissionPreview(
 
   const result = buildRoleOverwriteChanges(targets, role.id, permission, state);
   await saveAndReply(interaction, database, result, channels, role.name);
+}
+
+async function submitPlan(
+  interaction: ChatInputCommandInteraction,
+  database: DatabaseSync,
+  context?: PlanCommandContext,
+): Promise<void> {
+  const guildId = interaction.guildId;
+  if (!guildId || !context) {
+    await editPrivateReply(
+      interaction,
+      "Plan approval is not configured for this bot.",
+    );
+    return;
+  }
+  const authorization = authorizeInteraction(
+    {
+      guildId,
+      userId: interaction.user.id,
+      roleIds: getInteractionRoleIds(interaction),
+    },
+    context.requesterAuthorization,
+  );
+  if (!authorization.allowed) {
+    await editPrivateReply(
+      interaction,
+      "You are not authorized to submit plans in this server.",
+    );
+    return;
+  }
+
+  const plan = submitChangePlanForApproval(
+    database,
+    guildId,
+    interaction.options.getString("plan_id", true),
+    interaction.user.id,
+  );
+  await editPrivateReply(
+    interaction,
+    `Plan \`${plan.id}\` was submitted for approval. No Discord changes have been applied.`,
+  );
+}
+
+async function reviewPlan(
+  interaction: ChatInputCommandInteraction,
+  database: DatabaseSync,
+  context?: PlanCommandContext,
+): Promise<void> {
+  if (!isApprover(interaction, context)) {
+    await editPrivateReply(
+      interaction,
+      "You are not configured to review change plans.",
+    );
+    return;
+  }
+  const guildId = interaction.guildId;
+  if (!guildId) return;
+  const plan = getChangePlan(
+    database,
+    guildId,
+    interaction.options.getString("plan_id", true),
+  );
+  if (!plan) {
+    await editPrivateReply(
+      interaction,
+      "Change plan not found in this server.",
+    );
+    return;
+  }
+  if (plan.status !== "awaiting_approval") {
+    await editPrivateReply(
+      interaction,
+      `This plan is ${plan.status} and is not awaiting approval.`,
+    );
+    return;
+  }
+  await sendPrivateMessages(interaction, [
+    ...formatChangePlanPreview(plan),
+    "Review only. No decision has been recorded and no Discord changes have been applied.",
+  ]);
+}
+
+async function approvePlan(
+  interaction: ChatInputCommandInteraction,
+  database: DatabaseSync,
+  context?: PlanCommandContext,
+): Promise<void> {
+  if (!isApprover(interaction, context)) {
+    await editPrivateReply(
+      interaction,
+      "You are not configured to approve change plans.",
+    );
+    return;
+  }
+  const guild = interaction.guild;
+  if (!guild) return;
+  const guildId = guild.id;
+  const planId = interaction.options.getString("plan_id", true);
+  const plan = getChangePlan(database, guildId, planId);
+  if (!plan) {
+    await editPrivateReply(
+      interaction,
+      "Change plan not found in this server.",
+    );
+    return;
+  }
+  if (plan.status !== "awaiting_approval") {
+    await editPrivateReply(
+      interaction,
+      plan.status === "expired"
+        ? "This plan has expired. Create a new preview before requesting approval."
+        : `This plan is ${plan.status} and is not awaiting approval.`,
+    );
+    return;
+  }
+  if (plan.requestedBy === interaction.user.id) {
+    await editPrivateReply(
+      interaction,
+      "The requester cannot approve their own change plan.",
+    );
+    return;
+  }
+
+  const requesterAuthorization = context?.requesterAuthorization ?? {
+    guildId,
+    allowedUserIds: new Set<string>(),
+    allowedRoleIds: new Set<string>(),
+  };
+  const preflight = await preflightChangePlanOnDiscord(
+    guild,
+    plan,
+    requesterAuthorization,
+  );
+  if (!preflight.ready) {
+    const conflicted = markChangePlanConflicted(
+      database,
+      guildId,
+      plan.id,
+      interaction.user.id,
+    );
+    const messages = [
+      `Plan \`${conflicted.id}\` was marked conflicted. No Discord settings were changed.`,
+      ...preflight.issues.map((issue) =>
+        issue.item === null
+          ? `• ${issue.reason}`
+          : `• Item ${issue.item}, channel \`${issue.channelId}\`: ${issue.reason}`,
+      ),
+      "Create a new preview from the current configuration before requesting approval again.",
+    ];
+    await sendPrivateMessages(interaction, messages);
+    return;
+  }
+
+  const approved = approveChangePlan(
+    database,
+    guildId,
+    plan.id,
+    interaction.user.id,
+  );
+  await sendPrivateMessages(interaction, [
+    ...formatChangePlanPreview(approved),
+    `Approved by <@${interaction.user.id}> after a fresh read-only preflight. No Discord changes have been applied; execution is not available yet.`,
+  ]);
+}
+
+async function rejectPlan(
+  interaction: ChatInputCommandInteraction,
+  database: DatabaseSync,
+  context?: PlanCommandContext,
+): Promise<void> {
+  if (!isApprover(interaction, context)) {
+    await editPrivateReply(
+      interaction,
+      "You are not configured to reject change plans.",
+    );
+    return;
+  }
+  const guildId = interaction.guildId;
+  if (!guildId) return;
+  const plan = rejectChangePlan(
+    database,
+    guildId,
+    interaction.options.getString("plan_id", true),
+    interaction.user.id,
+  );
+  await editPrivateReply(
+    interaction,
+    `Plan \`${plan.id}\` was rejected. No Discord changes have been applied.`,
+  );
+}
+
+function isApprover(
+  interaction: ChatInputCommandInteraction,
+  context: PlanCommandContext | undefined,
+): boolean {
+  if (!context) return false;
+  return authorizePlanApprover(
+    {
+      guildId: interaction.guildId,
+      userId: interaction.user.id,
+      roleIds: getInteractionRoleIds(interaction),
+    },
+    context.approvalAuthorization,
+  ).allowed;
+}
+
+function getInteractionRoleIds(
+  interaction: ChatInputCommandInteraction,
+): Iterable<string> {
+  if (!interaction.inGuild() || !interaction.member) return [];
+  const roles = interaction.member.roles;
+  return "cache" in roles ? roles.cache.keys() : roles;
 }
 
 async function fetchSelectedChannels(

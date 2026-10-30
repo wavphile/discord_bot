@@ -58,6 +58,9 @@ export type ChangePlan = Readonly<{
   createdAt: string;
   expiresAt: string;
   status: ChangePlanStatus;
+  submittedAt: string | null;
+  decisionBy: string | null;
+  decisionAt: string | null;
   changes: readonly ChangePlanChange[];
 }>;
 
@@ -182,7 +185,7 @@ export function formatChangePlanPreview(
       isChangePlanExpired(plan, now));
   const header = [
     "**Change plan preview**",
-    `Plan: \`${escapeInline(plan.id.slice(0, 8))}\` · Status: ${expired ? "expired" : escapeInline(plan.status)}`,
+    `Plan ID: \`${escapeInline(plan.id)}\` · Status: ${expired ? "expired" : escapeInline(plan.status)}`,
     `Server: \`${escapeInline(plan.guildId)}\` · Requester: \`${escapeInline(plan.requestedBy)}\``,
     `Created: ${formatTimestamp(plan.createdAt)} · Expires: ${formatTimestamp(plan.expiresAt)}`,
     `Source snapshot: ${plan.sourceSnapshotId ? `\`${escapeInline(plan.sourceSnapshotId.slice(0, 8))}\`` : "none"}`,

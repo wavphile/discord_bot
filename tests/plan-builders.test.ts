@@ -221,6 +221,9 @@ test("preview names exact targets, values, and states that no edits were applied
       createdAt: "2026-10-30T00:00:00.000Z",
       expiresAt: "2026-10-30T00:30:00.000Z",
       status: "preview",
+      submittedAt: null,
+      decisionBy: null,
+      decisionAt: null,
       changes: [
         {
           channelId: channelA,

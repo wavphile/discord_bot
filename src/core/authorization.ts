@@ -4,6 +4,12 @@ export type AuthorizationPolicy = Readonly<{
   allowedRoleIds: ReadonlySet<string>;
 }>;
 
+export type ApprovalPolicy = Readonly<{
+  guildId: string;
+  approverUserIds: ReadonlySet<string>;
+  approverRoleIds: ReadonlySet<string>;
+}>;
+
 export type AuthorizationRequest = Readonly<{
   guildId: string | null;
   userId: string;
@@ -40,4 +46,22 @@ export function authorizeInteraction(
   }
 
   return { allowed: false, reason: "not_allowlisted" };
+}
+
+export function authorizePlanApprover(
+  request: AuthorizationRequest,
+  policy: ApprovalPolicy,
+): AuthorizationDecision {
+  return authorizeInteraction(
+    {
+      guildId: request.guildId,
+      userId: request.userId,
+      roleIds: request.roleIds,
+    },
+    {
+      guildId: policy.guildId,
+      allowedUserIds: policy.approverUserIds,
+      allowedRoleIds: policy.approverRoleIds,
+    },
+  );
 }

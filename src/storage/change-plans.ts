@@ -19,6 +19,9 @@ type ChangePlanRow = Readonly<{
   created_at: string;
   expires_at: string;
   status: string;
+  submitted_at: string | null;
+  decision_by: string | null;
+  decision_at: string | null;
 }>;
 
 type ChangePlanItemRow = Readonly<{
@@ -116,7 +119,13 @@ export function createChangePlan(
     throw error;
   }
 
-  return { id, ...prepared };
+  return {
+    id,
+    ...prepared,
+    submittedAt: null,
+    decisionBy: null,
+    decisionAt: null,
+  };
 }
 
 export function getChangePlan(
@@ -137,7 +146,7 @@ export function getChangePlan(
     .prepare(
       `
       SELECT plan_id, guild_id, requested_by, source_snapshot_id,
-             created_at, expires_at, status
+             created_at, expires_at, status, submitted_at, decision_by, decision_at
       FROM change_plans
       WHERE guild_id = ? AND plan_id = ?
     `,
@@ -169,6 +178,7 @@ export function getChangePlan(
   ) {
     throw new Error("A saved change plan contains invalid metadata.");
   }
+  validateApprovalMetadata(row);
 
   if (row.source_snapshot_id) {
     const sourceSnapshot = database
@@ -208,6 +218,9 @@ export function getChangePlan(
     sourceSnapshotId: row.source_snapshot_id,
     createdAt: row.created_at,
     expiresAt: row.expires_at,
+    submittedAt: row.submitted_at,
+    decisionBy: row.decision_by,
+    decisionAt: row.decision_at,
     status:
       (row.status === "preview" ||
         row.status === "awaiting_approval" ||
@@ -217,6 +230,238 @@ export function getChangePlan(
         : row.status,
     changes,
   };
+}
+
+export type ChangePlanTransitionErrorCode =
+  | "not_found"
+  | "not_requester"
+  | "wrong_status"
+  | "expired"
+  | "self_approval"
+  | "raced";
+
+export class ChangePlanTransitionError extends Error {
+  constructor(readonly code: ChangePlanTransitionErrorCode) {
+    super(transitionErrorMessage(code));
+    this.name = "ChangePlanTransitionError";
+  }
+}
+
+export function submitChangePlanForApproval(
+  database: DatabaseSync,
+  guildId: string,
+  planId: string,
+  requesterId: string,
+  now = new Date(),
+): ChangePlan {
+  validateTransitionInput(guildId, planId, requesterId, now);
+  return transitionPlan(database, {
+    guildId,
+    planId,
+    actorId: requesterId,
+    expectedStatus: "preview",
+    updateSql: `UPDATE change_plans
+      SET status = 'awaiting_approval', submitted_at = ?
+      WHERE guild_id = ? AND plan_id = ? AND status = 'preview'`,
+    updateValues: [now.toISOString(), guildId, planId],
+    requesterId,
+    now,
+  });
+}
+
+export function approveChangePlan(
+  database: DatabaseSync,
+  guildId: string,
+  planId: string,
+  approverId: string,
+  now = new Date(),
+): ChangePlan {
+  validateTransitionInput(guildId, planId, approverId, now);
+  return transitionPlan(database, {
+    guildId,
+    planId,
+    actorId: approverId,
+    expectedStatus: "awaiting_approval",
+    updateSql: `UPDATE change_plans
+      SET status = 'approved', decision_by = ?, decision_at = ?
+      WHERE guild_id = ? AND plan_id = ? AND status = 'awaiting_approval'
+        AND requested_by <> ?`,
+    updateValues: [approverId, now.toISOString(), guildId, planId, approverId],
+    requesterId: approverId,
+    now,
+    rejectSelfApproval: true,
+  });
+}
+
+export function rejectChangePlan(
+  database: DatabaseSync,
+  guildId: string,
+  planId: string,
+  approverId: string,
+  now = new Date(),
+): ChangePlan {
+  validateTransitionInput(guildId, planId, approverId, now);
+  return transitionPlan(database, {
+    guildId,
+    planId,
+    actorId: approverId,
+    expectedStatus: "awaiting_approval",
+    updateSql: `UPDATE change_plans
+      SET status = 'rejected', decision_by = ?, decision_at = ?
+      WHERE guild_id = ? AND plan_id = ? AND status = 'awaiting_approval'`,
+    updateValues: [approverId, now.toISOString(), guildId, planId],
+    requesterId: approverId,
+    now,
+  });
+}
+
+export function markChangePlanConflicted(
+  database: DatabaseSync,
+  guildId: string,
+  planId: string,
+  approverId: string,
+  now = new Date(),
+): ChangePlan {
+  validateTransitionInput(guildId, planId, approverId, now);
+  return transitionPlan(database, {
+    guildId,
+    planId,
+    actorId: approverId,
+    expectedStatus: "awaiting_approval",
+    updateSql: `UPDATE change_plans
+      SET status = 'conflicted', decision_by = ?, decision_at = ?
+      WHERE guild_id = ? AND plan_id = ? AND status = 'awaiting_approval'`,
+    updateValues: [approverId, now.toISOString(), guildId, planId],
+    requesterId: approverId,
+    now,
+  });
+}
+
+type PlanTransitionInput = Readonly<{
+  guildId: string;
+  planId: string;
+  actorId: string;
+  expectedStatus: "preview" | "awaiting_approval";
+  updateSql: string;
+  updateValues: readonly (string | null)[];
+  requesterId: string;
+  now: Date;
+  rejectSelfApproval?: boolean;
+}>;
+
+function transitionPlan(
+  database: DatabaseSync,
+  input: PlanTransitionInput,
+): ChangePlan {
+  let expired = false;
+  database.exec("BEGIN IMMEDIATE;");
+  try {
+    const row = database
+      .prepare(
+        `SELECT requested_by, expires_at, status
+         FROM change_plans WHERE guild_id = ? AND plan_id = ?`,
+      )
+      .get(input.guildId, input.planId) as
+      { requested_by: string; expires_at: string; status: string } | undefined;
+    if (!row) throw new ChangePlanTransitionError("not_found");
+    if (
+      input.expectedStatus === "preview" &&
+      row.requested_by !== input.requesterId
+    ) {
+      throw new ChangePlanTransitionError("not_requester");
+    }
+    if (row.status !== input.expectedStatus) {
+      throw new ChangePlanTransitionError("wrong_status");
+    }
+    if (input.rejectSelfApproval && row.requested_by === input.actorId) {
+      throw new ChangePlanTransitionError("self_approval");
+    }
+    if (Date.parse(row.expires_at) <= input.now.getTime()) {
+      database
+        .prepare(
+          `UPDATE change_plans SET status = 'expired'
+           WHERE guild_id = ? AND plan_id = ? AND status = ?`,
+        )
+        .run(input.guildId, input.planId, input.expectedStatus);
+      expired = true;
+    } else {
+      const result = database
+        .prepare(input.updateSql)
+        .run(...input.updateValues);
+      if (Number(result.changes) !== 1) {
+        throw new ChangePlanTransitionError("raced");
+      }
+    }
+    database.exec("COMMIT;");
+  } catch (error) {
+    if (database.isTransaction) database.exec("ROLLBACK;");
+    throw error;
+  }
+
+  if (expired) throw new ChangePlanTransitionError("expired");
+  const plan = getChangePlan(database, input.guildId, input.planId, input.now);
+  if (!plan) throw new ChangePlanTransitionError("not_found");
+  return plan;
+}
+
+function validateTransitionInput(
+  guildId: string,
+  planId: string,
+  actorId: string,
+  now: Date,
+): void {
+  validateSnowflake(guildId, "guildId");
+  validateSnowflake(actorId, "actorId");
+  if (!uuidPattern.test(planId)) {
+    throw new TypeError("planId must be a change plan UUID.");
+  }
+  if (!(now instanceof Date) || !Number.isFinite(now.getTime())) {
+    throw new TypeError("Plan transition time must be a valid date.");
+  }
+}
+
+function validateApprovalMetadata(row: ChangePlanRow): void {
+  if (
+    (row.submitted_at !== null && !isValidTimestamp(row.submitted_at)) ||
+    (row.decision_by !== null && !snowflakePattern.test(row.decision_by)) ||
+    (row.decision_at !== null && !isValidTimestamp(row.decision_at))
+  ) {
+    throw new Error("A saved change plan has invalid approval metadata.");
+  }
+  if (
+    (row.status === "awaiting_approval" ||
+      row.status === "approved" ||
+      row.status === "rejected" ||
+      row.status === "conflicted") &&
+    row.submitted_at === null
+  ) {
+    throw new Error("A submitted change plan is missing its submission time.");
+  }
+  if (
+    (row.status === "approved" ||
+      row.status === "rejected" ||
+      row.status === "conflicted") &&
+    (row.decision_by === null || row.decision_at === null)
+  ) {
+    throw new Error("A decided change plan is missing its decision metadata.");
+  }
+}
+
+function transitionErrorMessage(code: ChangePlanTransitionErrorCode): string {
+  switch (code) {
+    case "not_found":
+      return "Change plan not found in this server.";
+    case "not_requester":
+      return "Only the original requester can submit this plan for approval.";
+    case "wrong_status":
+      return "This plan is not in a state that allows that action.";
+    case "expired":
+      return "This plan has expired. Create a new preview before requesting approval.";
+    case "self_approval":
+      return "The requester cannot approve their own change plan.";
+    case "raced":
+      return "The plan changed while this action was being processed. Review its current status and try again.";
+  }
 }
 
 function parseChangePlanItem(row: ChangePlanItemRow): ChangePlanChange {

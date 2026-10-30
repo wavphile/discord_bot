@@ -6,7 +6,10 @@ import {
   type BaseInteraction,
 } from "discord.js";
 import { env } from "./config/env.js";
-import { authorizeInteraction } from "./core/authorization.js";
+import {
+  authorizeInteraction,
+  authorizePlanApprover,
+} from "./core/authorization.js";
 import { executeHealthCommand } from "./discord/commands/health.js";
 import { executePlanCommand } from "./discord/commands/plan.js";
 import { executePermissionsCommand } from "./discord/commands/permissions.js";
@@ -22,6 +25,11 @@ const authorizationPolicy = {
   allowedUserIds: new Set(env.DISCORD_ALLOWED_USER_IDS),
   allowedRoleIds: new Set(env.DISCORD_ALLOWED_ROLE_IDS),
 };
+const approvalAuthorizationPolicy = {
+  guildId: env.DISCORD_DEV_GUILD_ID,
+  approverUserIds: new Set(env.DISCORD_APPROVER_USER_IDS),
+  approverRoleIds: new Set(env.DISCORD_APPROVER_ROLE_IDS),
+};
 let shuttingDown = false;
 
 logger.info("storage.ready", { schemaVersion });
@@ -31,22 +39,35 @@ if (
 ) {
   logger.warn("authorization.allowlist.empty");
 }
+if (
+  approvalAuthorizationPolicy.approverUserIds.size === 0 &&
+  approvalAuthorizationPolicy.approverRoleIds.size === 0
+) {
+  logger.warn("authorization.approver_allowlist.empty");
+}
 
 client.once(Events.ClientReady, () => {
   logger.info("discord.ready", { schemaVersion });
 });
 
 client.on(Events.InteractionCreate, async (interaction) => {
-  const decision = authorizeInteraction(
-    {
-      guildId: interaction.guildId,
-      userId: interaction.user.id,
-      roleIds: interactionRoleIds(interaction),
-    },
-    authorizationPolicy,
-  );
+  const request = {
+    guildId: interaction.guildId,
+    userId: interaction.user.id,
+    roleIds: interactionRoleIds(interaction),
+  };
+  const decision = authorizeInteraction(request, authorizationPolicy);
+  const approvalCommand =
+    interaction.isChatInputCommand() &&
+    interaction.commandName === "plan" &&
+    ["review", "approve", "reject"].includes(
+      interaction.options.getSubcommand(false) ?? "",
+    );
+  const approverDecision = approvalCommand
+    ? authorizePlanApprover(request, approvalAuthorizationPolicy)
+    : { allowed: false as const };
 
-  if (!decision.allowed) {
+  if (!decision.allowed && !approverDecision.allowed) {
     logger.warn("authorization.interaction.denied", {
       ...(interaction.guildId ? { guildId: interaction.guildId } : {}),
       userId: interaction.user.id,
@@ -66,7 +87,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (interaction.commandName === "health") {
       await executeHealthCommand(interaction, schemaVersion);
     } else if (interaction.commandName === "plan") {
-      await executePlanCommand(interaction, database);
+      await executePlanCommand(interaction, database, {
+        requesterAuthorization: authorizationPolicy,
+        approvalAuthorization: approvalAuthorizationPolicy,
+      });
     } else if (interaction.commandName === "server") {
       await executeServerCommand(interaction, client, database);
     } else if (interaction.commandName === "permissions") {
