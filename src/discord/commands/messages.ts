@@ -4,9 +4,14 @@ import {
   PermissionFlagsBits,
   SlashCommandBuilder,
 } from "discord.js";
-import type { ChatInputCommandInteraction } from "discord.js";
+import type {
+  ChatInputCommandInteraction,
+  GuildBasedChannel,
+} from "discord.js";
 import type { DatabaseSync } from "node:sqlite";
 import type { AiProvider } from "../../ai/types.js";
+import type { GatewayCapabilities } from "../gateway-capabilities.js";
+import { unavailableGatewayCapabilityMessage } from "../gateway-capabilities.js";
 import type {
   MessageProviderId,
   MessageRetrievalSettings,
@@ -15,6 +20,13 @@ import {
   getMessageRetrievalSettings,
   setMessageRetrievalSettings,
 } from "../../storage/message-retrieval.js";
+import {
+  disableMessageRetention,
+  enableMessageRetention,
+  getMessageRetentionSettings,
+  purgeExpiredMessages,
+  purgeStoredMessages,
+} from "../../storage/message-retention.js";
 
 const maximumChannelCount = 25;
 
@@ -94,6 +106,65 @@ export const messagesCommand = new SlashCommandBuilder()
               )
               .setRequired(true),
           ),
+      )
+      .addSubcommand((subcommand) =>
+        subcommand
+          .setName("storage-enable")
+          .setDescription("Opt a text channel and its threads into retention.")
+          .addChannelOption((option) =>
+            option
+              .setName("channel")
+              .setDescription("Text channel whose new messages may be stored.")
+              .addChannelTypes(
+                ChannelType.GuildText,
+                ChannelType.GuildAnnouncement,
+              )
+              .setRequired(true),
+          )
+          .addIntegerOption((option) =>
+            option
+              .setName("retention_days")
+              .setDescription("Maximum message retention period (1–7 days).")
+              .setMinValue(1)
+              .setMaxValue(7)
+              .setRequired(true),
+          ),
+      )
+      .addSubcommand((subcommand) =>
+        subcommand
+          .setName("storage-disable")
+          .setDescription("Stop retention and delete stored messages.")
+          .addChannelOption((option) =>
+            option
+              .setName("channel")
+              .setDescription(
+                "Channel to disable; omit to disable this server.",
+              )
+              .addChannelTypes(
+                ChannelType.GuildText,
+                ChannelType.GuildAnnouncement,
+              ),
+          ),
+      ),
+  )
+  .addSubcommand((subcommand) =>
+    subcommand
+      .setName("purge")
+      .setDescription("Delete retained messages without disabling storage.")
+      .addBooleanOption((option) =>
+        option
+          .setName("confirm")
+          .setDescription("Confirm permanent deletion of retained messages.")
+          .setRequired(true),
+      )
+      .addChannelOption((option) =>
+        option
+          .setName("channel")
+          .setDescription("Channel to purge; omit to purge this server.")
+          .addChannelTypes(
+            ChannelType.GuildText,
+            ChannelType.GuildAnnouncement,
+          ),
       ),
   );
 
@@ -102,6 +173,10 @@ export async function executeMessagesCommand(
   database: DatabaseSync,
   defaultProvider: MessageProviderId,
   availableProviders: ReadonlyMap<string, AiProvider>,
+  gatewayCapabilities: GatewayCapabilities = {
+    guildMembers: false,
+    messageContent: false,
+  },
 ): Promise<void> {
   const guild = interaction.guild;
   const guildId = interaction.guildId;
@@ -118,6 +193,7 @@ export async function executeMessagesCommand(
     await interaction.reply({
       content: formatSettings(
         getMessageRetrievalSettings(database, guildId, defaultProvider),
+        getMessageRetentionSettings(database, guildId),
       ),
       flags: MessageFlags.Ephemeral,
     });
@@ -142,6 +218,32 @@ export async function executeMessagesCommand(
     defaultProvider,
   );
   const group = interaction.options.getSubcommandGroup();
+
+  if (subcommand === "purge") {
+    const channel = interaction.options.getChannel("channel");
+    if (!interaction.options.getBoolean("confirm")) {
+      await interaction.reply({
+        content:
+          "Confirm the destructive action by running `/messages purge confirm:true`. No messages were deleted.",
+        flags: MessageFlags.Ephemeral,
+      });
+      return;
+    }
+    if (channel && !isAllowedConfigurationChannel(channel, guildId)) {
+      await interaction.reply({
+        content: "Choose a text or announcement channel from this server.",
+        flags: MessageFlags.Ephemeral,
+      });
+      return;
+    }
+    const deleted = purgeStoredMessages(database, guildId, channel?.id);
+    await interaction.reply({
+      content: `Purged ${deleted} retained message(s)${channel ? ` from ${channel} and its threads` : " from this server"}. Retention settings remain enabled, so future eligible messages may be stored.`,
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
   if (group !== "config") return;
 
   if (subcommand === "enable") {
@@ -210,7 +312,7 @@ export async function executeMessagesCommand(
       ...(maxMessages === null ? {} : { maxMessages }),
     });
     await interaction.reply({
-      content: `Updated retrieval limits. ${formatSettings(getMessageRetrievalSettings(database, guildId, defaultProvider))}`,
+      content: `Updated retrieval limits. ${formatSettings(getMessageRetrievalSettings(database, guildId, defaultProvider), getMessageRetentionSettings(database, guildId))}`,
       flags: MessageFlags.Ephemeral,
     });
     return;
@@ -234,6 +336,98 @@ export async function executeMessagesCommand(
     saveSettings(database, guildId, { ...current, provider });
     await interaction.reply({
       content: `Message questions will use the ${provider} provider. ${provider === "openai" ? "Review the documented provider data handling before enabling message analysis." : "Mock responses are test output, not factual answers."}`,
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  if (subcommand === "storage-enable") {
+    const channel = interaction.options.getChannel("channel", true);
+    const retentionDays = interaction.options.getInteger(
+      "retention_days",
+      true,
+    );
+    if (!isAllowedConfigurationChannel(channel, guildId)) {
+      await interaction.reply({
+        content: "Choose a text or announcement channel from this server.",
+        flags: MessageFlags.Ephemeral,
+      });
+      return;
+    }
+    const capabilityMessage = unavailableGatewayCapabilityMessage(
+      "messageContent",
+      gatewayCapabilities,
+    );
+    if (capabilityMessage) {
+      await interaction.reply({
+        content: capabilityMessage,
+        flags: MessageFlags.Ephemeral,
+      });
+      return;
+    }
+
+    const botChannel = await guild.channels.fetch(channel.id).catch(() => null);
+    if (!botChannel || !isAllowedConfigurationChannel(botChannel, guildId)) {
+      await interaction.reply({
+        content: "The selected channel could not be fetched from this server.",
+        flags: MessageFlags.Ephemeral,
+      });
+      return;
+    }
+
+    const currentRetention = getMessageRetentionSettings(database, guildId);
+    if (
+      !currentRetention.channels.some(
+        (entry) => entry.channelId === botChannel.id,
+      ) &&
+      currentRetention.channels.length >= maximumChannelCount
+    ) {
+      await interaction.reply({
+        content: `A server can retain messages from at most ${maximumChannelCount} channels.`,
+        flags: MessageFlags.Ephemeral,
+      });
+      return;
+    }
+
+    const botMember = guild.members.me ?? (await guild.members.fetchMe());
+    const botPermissions = (botChannel as GuildBasedChannel).permissionsFor(
+      botMember,
+    );
+    if (
+      !botPermissions?.has(PermissionFlagsBits.ViewChannel) ||
+      !botPermissions.has(PermissionFlagsBits.ReadMessageHistory)
+    ) {
+      await interaction.reply({
+        content:
+          "The bot needs current View Channel and Read Message History access before retention can be enabled.",
+        flags: MessageFlags.Ephemeral,
+      });
+      return;
+    }
+
+    enableMessageRetention(database, guildId, botChannel.id, retentionDays);
+    purgeExpiredMessages(database);
+    await interaction.reply({
+      content: `Message retention is enabled for ${botChannel} and its threads. New human-authored message text is stored in this bot's local SQLite database for up to ${retentionDays} day(s); edits do not extend expiry.`,
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  if (subcommand === "storage-disable") {
+    const channel = interaction.options.getChannel("channel");
+    if (channel && !isAllowedConfigurationChannel(channel, guildId)) {
+      await interaction.reply({
+        content: "Choose a text or announcement channel from this server.",
+        flags: MessageFlags.Ephemeral,
+      });
+      return;
+    }
+    const deleted = disableMessageRetention(database, guildId, channel?.id);
+    await interaction.reply({
+      content: channel
+        ? `Retention is disabled for ${channel} and its threads. ${deleted} stored message(s) were deleted.`
+        : `Retention is disabled for this server. ${deleted} stored message(s) were deleted.`,
       flags: MessageFlags.Ephemeral,
     });
   }
@@ -264,10 +458,22 @@ function isAllowedConfigurationChannel(
   );
 }
 
-function formatSettings(settings: MessageRetrievalSettings): string {
+function formatSettings(
+  settings: MessageRetrievalSettings,
+  retention: ReturnType<typeof getMessageRetentionSettings>,
+): string {
   const channels =
     settings.channelIds.length > 0
       ? settings.channelIds.map((channelId) => `<#${channelId}>`).join(", ")
+      : "none";
+  const storageChannels =
+    retention.channels.length > 0
+      ? retention.channels
+          .map(
+            (channel) =>
+              `<#${channel.channelId}> (${channel.retentionDays} day(s))`,
+          )
+          .join(", ")
       : "none";
   return [
     `Message retrieval: ${settings.enabled ? "enabled" : "disabled"}`,
@@ -275,6 +481,9 @@ function formatSettings(settings: MessageRetrievalSettings): string {
     `Maximum lookback: ${settings.maxAgeDays} day(s)`,
     `Maximum messages per request: ${settings.maxMessages}`,
     `Provider: ${settings.provider}`,
-    "Retrieved message content is not stored.",
+    `Message retention: ${retention.channels.length > 0 ? "enabled" : "disabled"}`,
+    `Storage channels: ${storageChannels}`,
+    "Each channel's retention period starts at the message's original timestamp.",
+    "On-demand retrieval does not itself store messages.",
   ].join("\n");
 }

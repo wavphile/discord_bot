@@ -12,8 +12,12 @@ export function createGatewayIntents(
 ): GatewayIntentBits[] {
   const intents: GatewayIntentBits[] = [GatewayIntentBits.Guilds];
   if (capabilities.guildMembers) intents.push(GatewayIntentBits.GuildMembers);
-  if (capabilities.messageContent)
-    intents.push(GatewayIntentBits.MessageContent);
+  if (capabilities.messageContent) {
+    intents.push(
+      GatewayIntentBits.GuildMessages,
+      GatewayIntentBits.MessageContent,
+    );
+  }
   return intents;
 }
 
