@@ -99,13 +99,15 @@ M1 exit gate: M1-09's owner case and unit checks passed. The representative non-
 
 | ID | Task | Acceptance criteria |
 | --- | --- | --- |
-| 11 | Build structured change plans | Plans store server, requester, exact targets, old/new values, snapshot reference, expiry, and status; preview makes no edits |
+| 11 | [x] [Build structured change plans](https://github.com/wavphile/discord_bot/issues/19) | Plans store server, requester, exact targets, old/new values, snapshot reference, expiry, and status; preview makes no edits |
 | 12 | Implement first batch operations | Support text-channel slow mode, channel topics, and selected role/channel permissions; selectors resolve to a fixed visible target list |
 | 13 | Add approval and conflict checks | Only authorized approvers can apply; recheck requester, bot capability, and current values immediately before each operation; changed targets conflict rather than being overwritten |
 | 14 | Implement durable job execution | Per-server serialization, rate-limit handling, bounded retries, cancellation between items, and per-item results; restart reconciles ambiguous operations before retry |
 | 15 | Add recovery and audit records | Record actor, approver, reason, plan and job IDs, before/after values, and outcome; supported reversal creates a new reviewed plan and detects subsequent edits |
 
 Exit gate: preview and apply changes across at least 10 test channels; simulate an API failure and process restart; verify no duplicate or silently overwritten changes. Discord operations are not atomic, and the result must show partial completion explicitly.
+
+M2-11 implementation passed on October 30, 2026: schema v3 stores bounded, ordered change plans atomically; validates text/voice overwrite targets and selected permission-bit changes; scopes optional snapshots to the same server; and returns expired pending plans as expired without writing during preview. The 28-test suite, type check, build, and changed-file formatting checks passed. The PR tryout confirmed `/health` reports schema v3 in `#bots`. Plan creation and preview are not exposed as a Discord command yet; that interactive workflow is part of the later batch-operation step.
 
 ### Milestone M3 — AI configuration assistant (`v0.4.0`)
 

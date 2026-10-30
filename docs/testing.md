@@ -32,7 +32,7 @@ npm run deploy:commands
 npm run dev
 ```
 
-Keep the bot running, open the test server, and follow the pull request's **Try it** steps. Run `/health`; it should privately report that the bot is responding and SQLite schema v2 is ready. Run `/server inspect`; it should privately report a snapshot ID, capture time, role/category/channel/overwrite counts, and limited channel visibility. The command stores a configuration snapshot in SQLite. It does not change server settings and is not a complete server backup.
+Keep the bot running, open the test server, and follow the pull request's **Try it** steps. Run `/health`; it should privately report that the bot is responding and SQLite schema v3 is ready. Run `/server inspect`; it should privately report a snapshot ID, capture time, role/category/channel/overwrite counts, and limited channel visibility. The command stores a configuration snapshot in SQLite. It does not change server settings and is not a complete server backup.
 
 Run `/server inspect` a second time, then `/server diff`. The private comparison should show the two capture times and any differences in supported server settings, roles, returned channels, and channel permission overwrites. The comparison always warns that channel visibility is limited: a channel returned in only one snapshot may have been added or deleted, or may have become visible or inaccessible to the bot. Its presence alone does not establish which. Details for a channel that was unviewable in either snapshot are omitted. With fewer than two snapshots, `/server diff` asks you to capture another one.
 
@@ -70,6 +70,8 @@ git pull --ff-only
 ```
 
 The PR's guild-scoped command registration updates commands in the configured test server immediately. It does not change commands in other servers. `.env` is ignored by Git and is preserved when switching commits.
+
+The structured change-plan storage work is not exposed as a Discord command yet. Its preview is a pure formatter and makes no Discord API calls. `npm test` covers plan validation, expiry, snapshot scoping, ordered persistence, transaction rollback, and bounded preview output; `/health` confirms the test database migrated to schema v3. Plan creation and review become user-facing in the later batch-operation steps.
 
 ### Try the storage migration and restart persistence
 
