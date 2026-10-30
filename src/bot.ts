@@ -112,6 +112,13 @@ client.on(Events.InteractionCreate, async (interaction) => {
         requesterAuthorization: authorizationPolicy,
         approvalAuthorization: approvalAuthorizationPolicy,
         jobRunner: planJobRunner,
+        aiProvider,
+        aiLimits: {
+          maxInputTokens: env.AI_MAX_INPUT_TOKENS,
+          maxOutputTokens: env.AI_MAX_OUTPUT_TOKENS,
+          dailyTokenBudgetPerGuild: env.AI_DAILY_TOKEN_BUDGET_PER_GUILD,
+          requestTimeoutMs: env.AI_REQUEST_TIMEOUT_MS,
+        },
       });
     } else if (interaction.commandName === "server") {
       await executeServerCommand(interaction, client, database);
