@@ -118,6 +118,8 @@ $allowedUserValue = Get-DotEnvValue -Text $envText -Name "DISCORD_ALLOWED_USER_I
 $allowedRoleValue = Get-DotEnvValue -Text $envText -Name "DISCORD_ALLOWED_ROLE_IDS"
 $approverUserValue = Get-DotEnvValue -Text $envText -Name "DISCORD_APPROVER_USER_IDS"
 $approverRoleValue = Get-DotEnvValue -Text $envText -Name "DISCORD_APPROVER_ROLE_IDS"
+$guildMembersIntent = Get-DotEnvValue -Text $envText -Name "DISCORD_ENABLE_GUILD_MEMBERS_INTENT"
+$messageContentIntent = Get-DotEnvValue -Text $envText -Name "DISCORD_ENABLE_MESSAGE_CONTENT_INTENT"
 $databasePath = Get-DotEnvValue -Text $envText -Name "DATABASE_PATH"
 if ([string]::IsNullOrWhiteSpace($botToken) -or $botToken -like "replace-with-*") {
     throw "Set DISCORD_BOT_TOKEN in .env to your development bot token. The token will not be printed."
@@ -138,6 +140,14 @@ $approverUserIds = @(Get-SnowflakeList -Value $approverUserValue -Name "DISCORD_
 $approverRoleIds = @(Get-SnowflakeList -Value $approverRoleValue -Name "DISCORD_APPROVER_ROLE_IDS")
 if ($allowedUserIds.Count -eq 0 -and $allowedRoleIds.Count -eq 0) {
     throw "Set at least one test user ID or role ID in DISCORD_ALLOWED_USER_IDS or DISCORD_ALLOWED_ROLE_IDS in .env."
+}
+if ($null -eq $guildMembersIntent) { $guildMembersIntent = "false" }
+if ($null -eq $messageContentIntent) { $messageContentIntent = "false" }
+if ($guildMembersIntent -cnotmatch '^(true|false)$') {
+    throw "DISCORD_ENABLE_GUILD_MEMBERS_INTENT in .env must be exactly true or false."
+}
+if ($messageContentIntent -cnotmatch '^(true|false)$') {
+    throw "DISCORD_ENABLE_MESSAGE_CONTENT_INTENT in .env must be exactly true or false."
 }
 if ([string]::IsNullOrWhiteSpace($databasePath)) {
     $databasePath = "./data/discord-bot.sqlite"
@@ -166,6 +176,8 @@ Write-Host "Allowed test users:         $($allowedUserIds.Count)"
 Write-Host "Allowed test roles:         $($allowedRoleIds.Count)"
 Write-Host "Plan approver users:        $($approverUserIds.Count)"
 Write-Host "Plan approver roles:        $($approverRoleIds.Count)"
+Write-Host "Server Members intent:      $guildMembersIntent"
+Write-Host "Message Content intent:     $messageContentIntent"
 Write-Host "Database path:              $databasePath"
 Write-Host "Confirm these are your development app, private test server, and test database."
 
@@ -182,6 +194,8 @@ $environmentNames = @(
     "DISCORD_ALLOWED_ROLE_IDS",
     "DISCORD_APPROVER_USER_IDS",
     "DISCORD_APPROVER_ROLE_IDS",
+    "DISCORD_ENABLE_GUILD_MEMBERS_INTENT",
+    "DISCORD_ENABLE_MESSAGE_CONTENT_INTENT",
     "DATABASE_PATH",
     "NODE_ENV"
 )
@@ -199,6 +213,8 @@ try {
     [Environment]::SetEnvironmentVariable("DISCORD_ALLOWED_ROLE_IDS", ($allowedRoleIds -join ","), "Process")
     [Environment]::SetEnvironmentVariable("DISCORD_APPROVER_USER_IDS", ($approverUserIds -join ","), "Process")
     [Environment]::SetEnvironmentVariable("DISCORD_APPROVER_ROLE_IDS", ($approverRoleIds -join ","), "Process")
+    [Environment]::SetEnvironmentVariable("DISCORD_ENABLE_GUILD_MEMBERS_INTENT", $guildMembersIntent, "Process")
+    [Environment]::SetEnvironmentVariable("DISCORD_ENABLE_MESSAGE_CONTENT_INTENT", $messageContentIntent, "Process")
     [Environment]::SetEnvironmentVariable("DATABASE_PATH", $databasePath, "Process")
     [Environment]::SetEnvironmentVariable("NODE_ENV", "development", "Process")
 
