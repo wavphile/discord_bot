@@ -99,7 +99,7 @@ M1 exit gate: M1-09's owner case and unit checks passed. The representative non-
 
 | ID | Task | Acceptance criteria |
 | --- | --- | --- |
-| 11 | Build structured change plans | Plans store server, requester, exact targets, old/new values, snapshot reference, expiry, and status; preview makes no edits |
+| 11 | [Build structured change plans](https://github.com/wavphile/discord_bot/issues/19) | Plans store server, requester, exact targets, old/new values, snapshot reference, expiry, and status; preview makes no edits |
 | 12 | Implement first batch operations | Support text-channel slow mode, channel topics, and selected role/channel permissions; selectors resolve to a fixed visible target list |
 | 13 | Add approval and conflict checks | Only authorized approvers can apply; recheck requester, bot capability, and current values immediately before each operation; changed targets conflict rather than being overwritten |
 | 14 | Implement durable job execution | Per-server serialization, rate-limit handling, bounded retries, cancellation between items, and per-item results; restart reconciles ambiguous operations before retry |
