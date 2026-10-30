@@ -128,6 +128,8 @@ Exit gate: answer “Why can member X see channel Y?” with verifiable evidence
 
 M3-16 adds a provider-neutral interface, deterministic mock, OpenAI Responses adapter, validated provider and quota settings, schema v7 daily usage accounting, and a per-server generation boundary that reserves budget and records actual usage without persisting prompts or responses. The default remains the mock. No Discord AI command is included yet; live OpenAI calls and provider-account data controls remain to be verified before a later command sends server data. See [AI provider configuration](ai-providers.md) and [testing.md](testing.md).
 
+M3-16 validation passed on October 30, 2026: all 78 tests, type checking, production build, and GitHub Actions passed. The PR tryout registered the existing four guild commands and started the bot with SQLite schema v7. No AI command exists in this scope, so the OpenAI API was not called; live provider behavior and the account's data-control settings remain to be tested before a later feature sends server data.
+
 ### Milestone M4 — bounded message and member analysis (`v0.5.0`)
 
 | ID | Task | Acceptance criteria |
