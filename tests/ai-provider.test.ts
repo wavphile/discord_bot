@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   createAiProvider,
+  createAiProviders,
   AiProviderError,
   MockAiProvider,
 } from "../src/ai/index.js";
@@ -182,4 +183,23 @@ test("provider factory defaults to the mock and requires OpenAI credentials", ()
     (error: unknown) =>
       error instanceof AiProviderError && error.kind === "configuration",
   );
+});
+
+test("message provider registry exposes only providers configured locally", () => {
+  const settings = {
+    AI_PROVIDER: "mock" as const,
+    OPENAI_BASE_URL: "https://api.openai.com/v1",
+    OPENAI_MODEL: "test-model",
+    AI_REQUEST_TIMEOUT_MS: 5_000,
+  };
+  const mockOnly = createAiProviders(settings);
+  assert.deepEqual([...mockOnly.keys()], ["mock"]);
+  assert.ok(mockOnly.get("mock") instanceof MockAiProvider);
+
+  const withOpenAi = createAiProviders({
+    ...settings,
+    OPENAI_API_KEY: "test-api-key-that-must-not-leak",
+  });
+  assert.deepEqual([...withOpenAi.keys()], ["mock", "openai"]);
+  assert.ok(withOpenAi.get("openai") instanceof OpenAiResponsesProvider);
 });

@@ -229,12 +229,30 @@ Ask about a text or announcement channel that you can currently view, or select 
 /server inspect
 /ask question:"Why can this member view this channel?" channel:#bots member:@TestMember
 /ask question:"What roles and permissions does this member have?" member:@TestMember
-/ask question:"What did this member say in their latest message?" member:@TestMember
 ```
 
 The command is allowlisted, guild-only, and replies ephemerally. A channel question requires the requester to have current View Channel access and uses only that selected channel's snapshot data plus the selected member's current role membership; unrelated channel settings and other members' overwrites are omitted. Snapshots older than 24 hours, missing snapshots, missing channel data, or role definitions absent from the snapshot require a new `/server inspect`. The response includes the snapshot ID and capture time, member-role read time, a limited-visibility notice, and a deterministic permission calculation.
 
-A member-only question uses a fresh read of that same-server member's current roles, role permissions, join date when available, and timeout state, with an observation timestamp. It does not need a saved channel snapshot or enable a privileged Gateway intent. No messages are retrieved or stored. The third example should be declined before a provider request, with a reply that activity is not collected. The model has no tools and cannot make server changes. Mock output is explicitly labeled as a test response.
+A member-only question uses a fresh read of that same-server member's current roles, role permissions, join date when available, and timeout state, with an observation timestamp. It does not need a saved channel snapshot or enable a privileged Gateway intent. Message activity remains unavailable in this path; use the separately configured, explicit message-retrieval flow below. The model has no tools and cannot make server changes. Mock output is explicitly labeled as a test response.
+
+### Opt in to bounded message retrieval
+
+Message retrieval is off by default. In a private test server, a member with **Manage Server** can allow a text or announcement channel and set the request bounds. The optional Message Content Intent must be enabled both in `.env` and in the Developer Portal; the bot never enables it automatically. Restart the bot after changing the intent. Try a small bound with the local mock provider:
+
+```text
+/messages status
+/messages config enable channel:#bots
+/messages config limits max_age_days:1 max_messages:10
+/messages config provider provider:mock
+/ask question:"What topic came up recently?" channel:#bots include_messages:true
+/messages config disable channel:#bots
+```
+
+The `/ask` requester and bot must both currently have **View Channel** and **Read Message History** in the selected channel. In a private thread, each must also either be a current thread member or have **Manage Threads**; when membership lookup is needed, Server Members Intent must be enabled too. If membership cannot be checked, the request stops. To allow a thread, first allow its parent text channel with `/messages config enable`. The command fetches only the configured maximum number of messages within the configured 1–7 day lookback, skips bot-authored messages, and replies privately with retrieval bounds and timestamps. A no-text or out-of-window result makes no provider request. The setting is rechecked immediately before history is fetched.
+
+Message text is untrusted evidence. It cannot override the provider instructions or authorize tools, and the model has no tools. Retrieved messages, prompts, and answers are not stored in SQLite; the lookback is a per-request eligibility limit, not persistent retention or a purge schedule. With `provider:mock`, no hosted API call is made and the response is labeled as test output. The `openai` option is available only when `OPENAI_API_KEY` is configured locally; selecting it sends the bounded message text and question to that configured endpoint for token counting and generation. Review [provider data handling](ai-providers.md) and any required server notice before enabling it.
+
+As of October 30, 2026, 141 automated tests cover configuration defaults and permissions, channel and message bounds, private-thread membership, current requester and bot history access, opt-in rechecks, prompt-injection framing, provider availability, and storage boundaries. PR #42's startup tryout fetched the PR branch, installed the locked dependencies, registered six guild commands, and started the bot with SQLite schema v7 and both privileged-intent flags false; the bot logged `discord.ready`. No slash command was submitted and no message content was retrieved. Live `/health`, message retrieval, and a real hosted-provider response remain unverified in Discord. Use the private test server and only a fresh, specifically confirmed Discord interaction for those checks.
 
 The default `AI_PROVIDER=mock` produces deterministic local output and makes no network request. To receive a model answer, set `AI_PROVIDER=openai` and `OPENAI_API_KEY` in the ignored `.env`; `OPENAI_BASE_URL` and `OPENAI_MODEL` are documented in [AI provider configuration](ai-providers.md). Keep the key out of Git, logs, Discord, and Codex. See [provider data handling](ai-providers.md) before sending server configuration to a hosted service.
 

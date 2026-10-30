@@ -13,6 +13,8 @@ export type AiProviderSettings = Readonly<{
   AI_REQUEST_TIMEOUT_MS: number;
 }>;
 
+export type AiProviderId = "mock" | "openai";
+
 export function createAiProvider(settings: AiProviderSettings): AiProvider {
   if (settings.AI_PROVIDER === "mock") return new MockAiProvider();
   const config: OpenAiResponsesConfig = {
@@ -22,6 +24,24 @@ export function createAiProvider(settings: AiProviderSettings): AiProvider {
     timeoutMs: settings.AI_REQUEST_TIMEOUT_MS,
   };
   return new OpenAiResponsesProvider(config);
+}
+
+export function createAiProviders(
+  settings: AiProviderSettings,
+): ReadonlyMap<AiProviderId, AiProvider> {
+  const providers = new Map<AiProviderId, AiProvider>([
+    ["mock", new MockAiProvider()],
+  ]);
+  if (settings.OPENAI_API_KEY) {
+    const config: OpenAiResponsesConfig = {
+      apiKey: settings.OPENAI_API_KEY,
+      baseUrl: settings.OPENAI_BASE_URL,
+      model: settings.OPENAI_MODEL,
+      timeoutMs: settings.AI_REQUEST_TIMEOUT_MS,
+    };
+    providers.set("openai", new OpenAiResponsesProvider(config));
+  }
+  return providers;
 }
 
 export {

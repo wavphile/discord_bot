@@ -15,7 +15,7 @@ To try a pull request against a safe Discord test server, follow [the testing gu
 
 `/permissions explain` privately checks **View Channel**, **Send Messages**, and the separate **Send Messages in Threads** permission for a selected member in a text or announcement channel. It is read-only. See [permission calculation details and limitations](docs/permissions.md).
 
-`/ask` accepts a channel, a member, or both. A member-only question uses a fresh role and permission read without requiring a saved channel snapshot. The bot does not collect message activity; questions about message history are declined until a dated activity source exists.
+`/ask` accepts a channel, a member, or both. A member-only question uses a fresh role and permission read without requiring a saved channel snapshot. Recent-message questions require an explicit server-admin opt-in for each source channel, Message Content Intent, current requester and bot history access, and `/ask include_messages:true`. Retrieval is limited to 1–7 days and 1–50 messages per request; message text is fetched on demand and is not stored by the bot. With the default mock provider, it is not sent to a hosted service. Review [provider data handling](docs/ai-providers.md) before selecting a hosted provider, and follow [the testing guide](docs/testing.md) for setup and permission details.
 
 Build the production JavaScript with `npm run build`; run it with `npm start`.
 
