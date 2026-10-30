@@ -6,6 +6,7 @@ import type {
   AiGenerationRequest,
   AiProvider,
 } from "../src/ai/types.js";
+import { AiProviderError } from "../src/ai/errors.js";
 import { MockAiProvider } from "../src/ai/mock-provider.js";
 import type { ChatInputCommandInteraction } from "discord.js";
 import {
@@ -211,14 +212,17 @@ test("builder rejects wrong channel types and protected roles, and reports no-op
 function suggestionProvider(
   response: string,
   onGenerate?: () => void,
+  calls = { counted: 0, generated: 0 },
 ): AiProvider {
   return {
     id: "fixture",
     model: "fixture-v1",
     async countInputTokens() {
+      calls.counted += 1;
       return 10;
     },
     async generateText(_request: AiGenerationRequest): Promise<AiCompletion> {
+      calls.generated += 1;
       onGenerate?.();
       return {
         text: response,
@@ -233,11 +237,15 @@ function suggestionProvider(
 function commandFixture(options: {
   response: string;
   canView?: boolean;
+  channelGuildId?: string;
+  channelSelectors?: string;
+  maxInputTokens?: number;
+  requestedRoleId?: string;
   onGenerate?: () => void;
 }) {
   const channel = {
     id: channelId,
-    guildId,
+    guildId: options.channelGuildId ?? guildId,
     type: ChannelType.GuildText,
     name: "bots",
     viewable: true,
@@ -254,10 +262,16 @@ function commandFixture(options: {
     id: guildId,
     channels: { fetch: async () => channel },
     members: { fetch: async () => ({ id: memberId }) },
-    roles: { fetch: async () => undefined, cache: new Map() },
+    roles: {
+      fetch: async () => undefined,
+      cache: new Map([
+        [roleId, { id: roleId, name: "Helpers", managed: false }],
+      ]),
+    },
   };
   const replies: string[] = [];
   let deferredFlags: number | undefined;
+  const providerCalls = { counted: 0, generated: 0 };
   const interaction = {
     guild,
     guildId,
@@ -268,11 +282,12 @@ function commandFixture(options: {
         name === "request"
           ? "Set a five second slowmode for bot testing."
           : name === "channels"
-            ? `<#${channelId}>`
+            ? (options.channelSelectors ?? `<#${channelId}>`)
             : name === "reason"
               ? "Test a plan preview"
               : null,
-      getRole: () => null,
+      getRole: () =>
+        options.requestedRoleId ? { id: options.requestedRoleId } : null,
     },
     deferReply: async (value: { flags: number }) => {
       deferredFlags = value.flags;
@@ -284,7 +299,11 @@ function commandFixture(options: {
       replies.push(typeof value === "string" ? value : (value.content ?? ""));
     },
   } as unknown as ChatInputCommandInteraction;
-  const provider = suggestionProvider(options.response, options.onGenerate);
+  const provider = suggestionProvider(
+    options.response,
+    options.onGenerate,
+    providerCalls,
+  );
   const context = {
     requesterAuthorization: {
       guildId,
@@ -299,7 +318,7 @@ function commandFixture(options: {
     jobRunner: {} as never,
     aiProvider: provider,
     aiLimits: {
-      maxInputTokens: 1_000,
+      maxInputTokens: options.maxInputTokens ?? 1_000,
       maxOutputTokens: 128,
       dailyTokenBudgetPerGuild: 1_000,
       requestTimeoutMs: 5_000,
@@ -313,6 +332,7 @@ function commandFixture(options: {
       return deferredFlags;
     },
     channel,
+    providerCalls,
   };
 }
 
@@ -360,6 +380,8 @@ test("suggest command fails closed before saving when access is denied or settin
     try {
       await executePlanCommand(fixture.interaction, database, fixture.context);
       assert.match(fixture.replies.join("\n"), /current View Channel access/);
+      assert.equal(fixture.providerCalls.counted, 0);
+      assert.equal(fixture.providerCalls.generated, 0);
       assert.equal(
         database.prepare("SELECT COUNT(*) AS count FROM change_plans").get()?.[
           "count"
@@ -414,6 +436,152 @@ test("suggest command rejects invalid provider output without creating any plan"
   try {
     await executePlanCommand(fixture.interaction, database, fixture.context);
     assert.match(fixture.replies.join("\n"), /No plan was saved/);
+    assert.equal(
+      database.prepare("SELECT COUNT(*) AS count FROM change_plans").get()?.[
+        "count"
+      ],
+      0,
+    );
+  } finally {
+    database.close();
+  }
+});
+
+test("suggest command rejects cross-server channels and roles before contacting the provider", async (t) => {
+  await t.test("foreign channel ID", async () => {
+    const database = openDatabase(":memory:");
+    const fixture = commandFixture({
+      channelGuildId: "99999999999999999",
+      response: encoded([{ target_index: 0, setting: "slowmode", seconds: 5 }]),
+    });
+    try {
+      await executePlanCommand(fixture.interaction, database, fixture.context);
+      assert.match(fixture.replies.join("\n"), /belongs to another server/);
+      assert.equal(fixture.providerCalls.counted, 0);
+      assert.equal(fixture.providerCalls.generated, 0);
+      assert.equal(
+        database.prepare("SELECT COUNT(*) AS count FROM change_plans").get()?.[
+          "count"
+        ],
+        0,
+      );
+    } finally {
+      database.close();
+    }
+  });
+
+  await t.test("foreign role ID", async () => {
+    const database = openDatabase(":memory:");
+    const fixture = commandFixture({
+      requestedRoleId: "99999999999999999",
+      response: encoded([{ target_index: 0, setting: "slowmode", seconds: 5 }]),
+    });
+    try {
+      await executePlanCommand(fixture.interaction, database, fixture.context);
+      assert.match(
+        fixture.replies.join("\n"),
+        /existing unmanaged custom role/,
+      );
+      assert.equal(fixture.providerCalls.counted, 0);
+      assert.equal(fixture.providerCalls.generated, 0);
+      assert.equal(
+        database.prepare("SELECT COUNT(*) AS count FROM change_plans").get()?.[
+          "count"
+        ],
+        0,
+      );
+    } finally {
+      database.close();
+    }
+  });
+});
+
+test("suggest command bounds target count and stops over-limit context before generation", async (t) => {
+  await t.test("reject more than ten selected channels", async () => {
+    const database = openDatabase(":memory:");
+    const selectors = Array.from(
+      { length: 11 },
+      (_, index) =>
+        `<#${(60_000_000_000_000_000n + BigInt(index)).toString()}>`,
+    ).join(",");
+    const fixture = commandFixture({
+      channelSelectors: selectors,
+      response: encoded([{ target_index: 0, setting: "slowmode", seconds: 5 }]),
+    });
+    try {
+      await executePlanCommand(fixture.interaction, database, fixture.context);
+      assert.match(fixture.replies.join("\n"), /Choose at most 10 channels/);
+      assert.equal(fixture.providerCalls.counted, 0);
+      assert.equal(fixture.providerCalls.generated, 0);
+      assert.equal(
+        database.prepare("SELECT COUNT(*) AS count FROM change_plans").get()?.[
+          "count"
+        ],
+        0,
+      );
+    } finally {
+      database.close();
+    }
+  });
+
+  await t.test(
+    "provider token count exceeds configured input ceiling",
+    async () => {
+      const database = openDatabase(":memory:");
+      const fixture = commandFixture({
+        maxInputTokens: 5,
+        response: encoded([
+          { target_index: 0, setting: "slowmode", seconds: 5 },
+        ]),
+      });
+      try {
+        await executePlanCommand(
+          fixture.interaction,
+          database,
+          fixture.context,
+        );
+        assert.match(
+          fixture.replies.join("\n"),
+          /exceed the configured AI input limit/,
+        );
+        assert.equal(fixture.providerCalls.counted, 1);
+        assert.equal(fixture.providerCalls.generated, 0);
+        assert.equal(
+          database
+            .prepare("SELECT COUNT(*) AS count FROM change_plans")
+            .get()?.["count"],
+          0,
+        );
+      } finally {
+        database.close();
+      }
+    },
+  );
+});
+
+test("suggest provider failures do not disclose provider bodies or save plans", async () => {
+  const database = openDatabase(":memory:");
+  const fixture = commandFixture({ response: "unused" });
+  fixture.context.aiProvider = {
+    id: "fixture",
+    model: "fixture-v1",
+    async countInputTokens() {
+      return 10;
+    },
+    async generateText() {
+      throw new AiProviderError(
+        "unavailable",
+        "provider response with API secret",
+      );
+    },
+  };
+  try {
+    await executePlanCommand(fixture.interaction, database, fixture.context);
+    assert.match(fixture.replies.join("\n"), /provider could not complete/);
+    assert.doesNotMatch(
+      fixture.replies.join("\n"),
+      /provider response|API secret/,
+    );
     assert.equal(
       database.prepare("SELECT COUNT(*) AS count FROM change_plans").get()?.[
         "count"
