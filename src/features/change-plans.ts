@@ -34,6 +34,8 @@ export type CreateChangePlanInput = Readonly<{
   guildId: string;
   requestedBy: string;
   sourceSnapshotId?: string | null;
+  reason?: string | undefined;
+  reversalOfJobId?: string | null;
   changes: readonly ChangePlanChange[];
 }>;
 
@@ -55,6 +57,8 @@ export type ChangePlan = Readonly<{
   guildId: string;
   requestedBy: string;
   sourceSnapshotId: string | null;
+  reason: string;
+  reversalOfJobId: string | null;
   createdAt: string;
   expiresAt: string;
   status: ChangePlanStatus;
@@ -68,6 +72,8 @@ export type PreparedChangePlan = Readonly<{
   guildId: string;
   requestedBy: string;
   sourceSnapshotId: string | null;
+  reason: string;
+  reversalOfJobId: string | null;
   createdAt: string;
   expiresAt: string;
   status: "preview";
@@ -116,6 +122,14 @@ export function prepareChangePlan(
   if (sourceSnapshotId !== null && !uuidPattern.test(sourceSnapshotId)) {
     throw new TypeError("sourceSnapshotId must be a saved snapshot UUID.");
   }
+  const reason = input.reason?.trim() || "No reason provided.";
+  if (reason.length > 500) {
+    throw new RangeError("Plan reason cannot exceed 500 characters.");
+  }
+  const reversalOfJobId = input.reversalOfJobId ?? null;
+  if (reversalOfJobId !== null && !uuidPattern.test(reversalOfJobId)) {
+    throw new TypeError("reversalOfJobId must be a plan job UUID.");
+  }
   const changes = validateChangePlanChanges(input.changes);
   const createdAt = now.toISOString();
   const expiresAt = new Date(now.getTime() + CHANGE_PLAN_TTL_MS).toISOString();
@@ -123,6 +137,8 @@ export function prepareChangePlan(
     guildId: input.guildId,
     requestedBy: input.requestedBy,
     sourceSnapshotId,
+    reason,
+    reversalOfJobId,
     createdAt,
     expiresAt,
     status: "preview",
@@ -161,6 +177,35 @@ export function validateChangePlanChanges(
   return changes;
 }
 
+export function reverseChangePlanChange(
+  change: ChangePlanChange,
+): ChangePlanChange {
+  if (change.settingKey === "channel.topic") {
+    return {
+      channelId: change.channelId,
+      settingKey: change.settingKey,
+      before: change.after,
+      after: change.before,
+    };
+  }
+  if (change.settingKey === "channel.slowmode") {
+    return {
+      channelId: change.channelId,
+      settingKey: change.settingKey,
+      before: change.after,
+      after: change.before,
+    };
+  }
+  return {
+    channelId: change.channelId,
+    channelType: change.channelType,
+    roleId: change.roleId,
+    settingKey: change.settingKey,
+    before: change.after,
+    after: change.before,
+  };
+}
+
 export function isChangePlanExpired(
   plan: Pick<ChangePlan, "expiresAt">,
   now = new Date(),
@@ -189,6 +234,7 @@ export function formatChangePlanPreview(
     `Server: \`${escapeInline(plan.guildId)}\` · Requester: \`${escapeInline(plan.requestedBy)}\``,
     `Created: ${formatTimestamp(plan.createdAt)} · Expires: ${formatTimestamp(plan.expiresAt)}`,
     `Source snapshot: ${plan.sourceSnapshotId ? `\`${escapeInline(plan.sourceSnapshotId.slice(0, 8))}\`` : "none"}`,
+    `Reason: ${escapeInline(plan.reason)}`,
     "Preview only. No Discord changes have been applied.",
   ].join("\n");
 

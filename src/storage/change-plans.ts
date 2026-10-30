@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
+import { appendPlanAuditEvent } from "./plan-audit.js";
 import {
   isChangePlanExpired,
   prepareChangePlan,
@@ -16,6 +17,8 @@ type ChangePlanRow = Readonly<{
   guild_id: string;
   requested_by: string;
   source_snapshot_id: string | null;
+  reason: string;
+  reversal_of_job_id: string | null;
   created_at: string;
   expires_at: string;
   status: string;
@@ -72,13 +75,22 @@ export function createChangePlan(
         );
       }
     }
+    if (prepared.reversalOfJobId) {
+      validateReversalInput(
+        database,
+        prepared.guildId,
+        prepared.reversalOfJobId,
+        prepared.changes,
+      );
+    }
 
     database
       .prepare(
         `
         INSERT INTO change_plans
-          (plan_id, guild_id, requested_by, source_snapshot_id, created_at, expires_at, status)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+          (plan_id, guild_id, requested_by, source_snapshot_id, created_at,
+           expires_at, status, reason, reversal_of_job_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
       )
       .run(
@@ -89,6 +101,8 @@ export function createChangePlan(
         prepared.createdAt,
         prepared.expiresAt,
         prepared.status,
+        prepared.reason,
+        prepared.reversalOfJobId,
       );
 
     const insertItem = database.prepare(
@@ -111,6 +125,28 @@ export function createChangePlan(
         JSON.stringify(change.before),
         JSON.stringify(change.after),
       );
+      appendPlanAuditEvent(database, {
+        guildId: prepared.guildId,
+        actorId: prepared.requestedBy,
+        reason: prepared.reason,
+        action: prepared.reversalOfJobId
+          ? "reversal_preview_created"
+          : "preview_created",
+        planId: id,
+        jobId: prepared.reversalOfJobId,
+        ordinal,
+        channelId: change.channelId,
+        settingKey: change.settingKey,
+        subjectId:
+          change.settingKey === "channel.role_overwrite" ? change.roleId : null,
+        before: change.before,
+        after: change.after,
+        outcome: "preview",
+        details: prepared.reversalOfJobId
+          ? `Reversal preview of job ${prepared.reversalOfJobId}.`
+          : null,
+        createdAt: now,
+      });
     }
 
     database.exec("COMMIT;");
@@ -126,6 +162,69 @@ export function createChangePlan(
     decisionBy: null,
     decisionAt: null,
   };
+}
+
+function validateReversalInput(
+  database: DatabaseSync,
+  guildId: string,
+  jobId: string,
+  changes: readonly ChangePlanChange[],
+): void {
+  const job = database
+    .prepare("SELECT guild_id, status FROM plan_jobs WHERE job_id = ?")
+    .get(jobId) as { guild_id: string; status: string } | undefined;
+  if (
+    !job ||
+    job.guild_id !== guildId ||
+    !["applied", "partial", "failed", "conflicted", "cancelled"].includes(
+      job.status,
+    )
+  ) {
+    throw new TypeError(
+      "A reversal must target a completed job in this server.",
+    );
+  }
+  const appliedItems = database
+    .prepare(
+      `SELECT c.channel_id, c.setting_key, c.subject_id,
+              c.before_json, c.after_json
+       FROM plan_job_items i
+       JOIN change_plan_items c
+         ON c.plan_id = i.plan_id AND c.ordinal = i.ordinal
+       WHERE i.job_id = ? AND i.status = 'applied'
+       ORDER BY i.ordinal ASC`,
+    )
+    .all(jobId) as {
+    channel_id: string;
+    setting_key: string;
+    subject_id: string | null;
+    before_json: string;
+    after_json: string;
+  }[];
+  if (appliedItems.length === 0 || appliedItems.length !== changes.length) {
+    throw new TypeError(
+      "A reversal must include every applied item from its source job.",
+    );
+  }
+  for (const change of changes) {
+    const subjectId =
+      change.settingKey === "channel.role_overwrite" ? change.roleId : null;
+    const original = appliedItems.find(
+      (item) =>
+        item.channel_id === change.channelId &&
+        item.setting_key === change.settingKey &&
+        item.subject_id === subjectId,
+    );
+    if (
+      !original ||
+      JSON.stringify(change.before) !== original.after_json ||
+      JSON.stringify(change.after) !== original.before_json
+    ) {
+      throw new TypeError(
+        "Every reversal item must exactly swap an applied item's before and after values.",
+      );
+    }
+  }
 }
 
 export function getChangePlan(
@@ -146,7 +245,8 @@ export function getChangePlan(
     .prepare(
       `
       SELECT plan_id, guild_id, requested_by, source_snapshot_id,
-             created_at, expires_at, status, submitted_at, decision_by, decision_at
+             created_at, expires_at, status, submitted_at, decision_by,
+             decision_at, reason, reversal_of_job_id
       FROM change_plans
       WHERE guild_id = ? AND plan_id = ?
     `,
@@ -174,7 +274,11 @@ export function getChangePlan(
     !isValidTimestamp(row.expires_at) ||
     Date.parse(row.expires_at) <= Date.parse(row.created_at) ||
     (row.source_snapshot_id !== null &&
-      !uuidPattern.test(row.source_snapshot_id))
+      !uuidPattern.test(row.source_snapshot_id)) ||
+    !row.reason.trim() ||
+    row.reason.length > 500 ||
+    (row.reversal_of_job_id !== null &&
+      !uuidPattern.test(row.reversal_of_job_id))
   ) {
     throw new Error("A saved change plan contains invalid metadata.");
   }
@@ -216,6 +320,8 @@ export function getChangePlan(
     guildId: row.guild_id,
     requestedBy: row.requested_by,
     sourceSnapshotId: row.source_snapshot_id,
+    reason: row.reason,
+    reversalOfJobId: row.reversal_of_job_id,
     createdAt: row.created_at,
     expiresAt: row.expires_at,
     submittedAt: row.submitted_at,
@@ -264,6 +370,7 @@ export function submitChangePlanForApproval(
       SET status = 'awaiting_approval', submitted_at = ?
       WHERE guild_id = ? AND plan_id = ? AND status = 'preview'`,
     updateValues: [now.toISOString(), guildId, planId],
+    action: "plan_submitted",
     requesterId,
     now,
   });
@@ -275,6 +382,7 @@ export function approveChangePlan(
   planId: string,
   approverId: string,
   now = new Date(),
+  reason?: string,
 ): ChangePlan {
   validateTransitionInput(guildId, planId, approverId, now);
   return transitionPlan(database, {
@@ -287,6 +395,8 @@ export function approveChangePlan(
       WHERE guild_id = ? AND plan_id = ? AND status = 'awaiting_approval'
         AND requested_by <> ?`,
     updateValues: [approverId, now.toISOString(), guildId, planId, approverId],
+    action: "plan_approved",
+    reason,
     requesterId: approverId,
     now,
     rejectSelfApproval: true,
@@ -299,6 +409,7 @@ export function rejectChangePlan(
   planId: string,
   approverId: string,
   now = new Date(),
+  reason?: string,
 ): ChangePlan {
   validateTransitionInput(guildId, planId, approverId, now);
   return transitionPlan(database, {
@@ -310,6 +421,8 @@ export function rejectChangePlan(
       SET status = 'rejected', decision_by = ?, decision_at = ?
       WHERE guild_id = ? AND plan_id = ? AND status = 'awaiting_approval'`,
     updateValues: [approverId, now.toISOString(), guildId, planId],
+    action: "plan_rejected",
+    reason,
     requesterId: approverId,
     now,
   });
@@ -321,6 +434,7 @@ export function markChangePlanConflicted(
   planId: string,
   approverId: string,
   now = new Date(),
+  reason?: string,
 ): ChangePlan {
   validateTransitionInput(guildId, planId, approverId, now);
   return transitionPlan(database, {
@@ -332,6 +446,8 @@ export function markChangePlanConflicted(
       SET status = 'conflicted', decision_by = ?, decision_at = ?
       WHERE guild_id = ? AND plan_id = ? AND status = 'awaiting_approval'`,
     updateValues: [approverId, now.toISOString(), guildId, planId],
+    action: "plan_conflicted",
+    reason,
     requesterId: approverId,
     now,
   });
@@ -344,6 +460,9 @@ type PlanTransitionInput = Readonly<{
   expectedStatus: "preview" | "awaiting_approval";
   updateSql: string;
   updateValues: readonly (string | null)[];
+  action:
+    "plan_submitted" | "plan_approved" | "plan_rejected" | "plan_conflicted";
+  reason?: string | undefined;
   requesterId: string;
   now: Date;
   rejectSelfApproval?: boolean;
@@ -358,11 +477,17 @@ function transitionPlan(
   try {
     const row = database
       .prepare(
-        `SELECT requested_by, expires_at, status
+        `SELECT requested_by, expires_at, status, reason
          FROM change_plans WHERE guild_id = ? AND plan_id = ?`,
       )
       .get(input.guildId, input.planId) as
-      { requested_by: string; expires_at: string; status: string } | undefined;
+      | {
+          requested_by: string;
+          expires_at: string;
+          status: string;
+          reason: string;
+        }
+      | undefined;
     if (!row) throw new ChangePlanTransitionError("not_found");
     if (
       input.expectedStatus === "preview" &&
@@ -383,6 +508,18 @@ function transitionPlan(
            WHERE guild_id = ? AND plan_id = ? AND status = ?`,
         )
         .run(input.guildId, input.planId, input.expectedStatus);
+      appendPlanAuditEvent(database, {
+        guildId: input.guildId,
+        actorId: input.actorId,
+        approverId:
+          input.expectedStatus === "awaiting_approval" ? input.actorId : null,
+        reason: input.reason?.trim() || row.reason,
+        action: "plan_expired",
+        planId: input.planId,
+        outcome: "expired",
+        details: `Expired before ${input.action}.`,
+        createdAt: input.now,
+      });
       expired = true;
     } else {
       const result = database
@@ -391,6 +528,17 @@ function transitionPlan(
       if (Number(result.changes) !== 1) {
         throw new ChangePlanTransitionError("raced");
       }
+      appendPlanAuditEvent(database, {
+        guildId: input.guildId,
+        actorId: input.actorId,
+        approverId:
+          input.expectedStatus === "awaiting_approval" ? input.actorId : null,
+        reason: input.reason?.trim() || row.reason,
+        action: input.action,
+        planId: input.planId,
+        outcome: input.action.replace("plan_", ""),
+        createdAt: input.now,
+      });
     }
     database.exec("COMMIT;");
   } catch (error) {

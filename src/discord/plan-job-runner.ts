@@ -47,7 +47,11 @@ export type PlanJobAdapter = Readonly<{
     requestedBy: string,
   ): Promise<boolean>;
   read(guildId: string, change: ChangePlanChange): Promise<PlanTargetRead>;
-  write(guildId: string, change: ChangePlanChange): Promise<void>;
+  write(
+    guildId: string,
+    change: ChangePlanChange,
+    context: Readonly<{ jobId: string; planId: string; reason: string }>,
+  ): Promise<void>;
 }>;
 
 export class DurablePlanJobRunner {
@@ -102,8 +106,13 @@ export class DurablePlanJobRunner {
     return task;
   }
 
-  requestCancellation(guildId: string, jobId: string): void {
-    requestPlanJobCancellation(this.database, guildId, jobId);
+  requestCancellation(
+    guildId: string,
+    jobId: string,
+    actorId: string,
+    reason?: string,
+  ): void {
+    requestPlanJobCancellation(this.database, guildId, jobId, actorId, reason);
     this.schedule(guildId, jobId);
   }
 
@@ -268,7 +277,11 @@ export class DurablePlanJobRunner {
       }
 
       try {
-        await this.adapter.write(guildId, item.change);
+        await this.adapter.write(guildId, item.change, {
+          jobId: job.id,
+          planId: job.planId,
+          reason: job.reason,
+        });
         setPlanJobItemStatus(
           this.database,
           guildId,
@@ -426,7 +439,8 @@ export function createDiscordPlanJobAdapter(
       }
       return readPlanTargetOnDiscord(guild, change);
     },
-    async write(guildId, change) {
+    async write(guildId, change, context) {
+      const auditReason = formatDiscordAuditReason(context);
       const guild = await client.guilds.fetch(guildId);
       if (!guild)
         throw new Error("The planned server is not currently available.");
@@ -440,7 +454,7 @@ export function createDiscordPlanJobAdapter(
         if (channel.type !== ChannelType.GuildText) {
           throw new Error("The planned topic channel is no longer supported.");
         }
-        await channel.setTopic(change.after, "Apply approved change plan");
+        await channel.setTopic(change.after, auditReason);
         return;
       }
       if (change.settingKey === "channel.slowmode") {
@@ -449,10 +463,7 @@ export function createDiscordPlanJobAdapter(
             "The planned slowmode channel is no longer supported.",
           );
         }
-        await channel.setRateLimitPerUser(
-          change.after,
-          "Apply approved change plan",
-        );
+        await channel.setRateLimitPerUser(change.after, auditReason);
         return;
       }
       if (
@@ -477,11 +488,20 @@ export function createDiscordPlanJobAdapter(
         change.roleId,
         options,
         {
-          reason: "Apply approved change plan",
+          reason: auditReason,
         },
       );
     },
   };
+}
+
+function formatDiscordAuditReason(context: {
+  jobId: string;
+  planId: string;
+  reason: string;
+}): string {
+  const prefix = `Plan ${context.planId}; job ${context.jobId}: `;
+  return `${prefix}${context.reason}`.slice(0, 512);
 }
 
 export function changedPermissionOptions(

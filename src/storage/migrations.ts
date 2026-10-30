@@ -1,4 +1,5 @@
 import type { DatabaseSync } from "node:sqlite";
+import { appendPlanAuditEvent } from "./plan-audit.js";
 
 type Migration = Readonly<{
   version: number;
@@ -142,4 +143,285 @@ export const migrations: readonly Migration[] = [
       `);
     },
   },
+  {
+    version: 6,
+    name: "create_plan_audit_log",
+    up(database) {
+      database.exec(`
+        ALTER TABLE change_plans
+          ADD COLUMN reason TEXT NOT NULL DEFAULT 'No reason provided.';
+        ALTER TABLE change_plans
+          ADD COLUMN reversal_of_job_id TEXT;
+
+        CREATE TABLE plan_audit_events (
+          event_id TEXT PRIMARY KEY,
+          guild_id TEXT NOT NULL,
+          actor_id TEXT NOT NULL,
+          approver_id TEXT,
+          reason TEXT NOT NULL CHECK (length(reason) BETWEEN 1 AND 500),
+          action TEXT NOT NULL,
+          plan_id TEXT,
+          job_id TEXT,
+          ordinal INTEGER CHECK (ordinal IS NULL OR ordinal >= 0),
+          channel_id TEXT,
+          setting_key TEXT,
+          subject_id TEXT,
+          before_json TEXT CHECK (before_json IS NULL OR json_valid(before_json)),
+          after_json TEXT CHECK (after_json IS NULL OR json_valid(after_json)),
+          outcome TEXT NOT NULL,
+          details TEXT,
+          created_at TEXT NOT NULL
+        );
+        CREATE INDEX plan_audit_events_plan_created
+          ON plan_audit_events (guild_id, plan_id, created_at DESC);
+        CREATE INDEX plan_audit_events_job_created
+          ON plan_audit_events (guild_id, job_id, created_at DESC);
+
+        CREATE TRIGGER plan_audit_events_no_update
+          BEFORE UPDATE ON plan_audit_events
+          BEGIN
+            SELECT RAISE(ABORT, 'plan audit events are append-only');
+          END;
+        CREATE TRIGGER plan_audit_events_no_delete
+          BEFORE DELETE ON plan_audit_events
+          BEGIN
+            SELECT RAISE(ABORT, 'plan audit events are append-only');
+          END;
+      `);
+      backfillPlanAuditEvents(database);
+    },
+  },
 ];
+
+type HistoricalPlanRow = Readonly<{
+  plan_id: string;
+  guild_id: string;
+  requested_by: string;
+  reason: string;
+  reversal_of_job_id: string | null;
+  created_at: string;
+  status: string;
+  submitted_at: string | null;
+  decision_by: string | null;
+  decision_at: string | null;
+}>;
+
+type HistoricalItemRow = Readonly<{
+  ordinal: number;
+  channel_id: string;
+  setting_key: string;
+  subject_id: string | null;
+  before_json: string;
+  after_json: string;
+}>;
+
+type HistoricalJobRow = Readonly<{
+  job_id: string;
+  approved_by: string;
+  created_by: string;
+  created_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+  status: string;
+}>;
+
+type HistoricalJobItemRow = Readonly<{
+  ordinal: number;
+  status: string;
+  attempts: number;
+  last_error: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+}>;
+
+function backfillPlanAuditEvents(database: DatabaseSync): void {
+  const plans = database
+    .prepare(
+      `SELECT plan_id, guild_id, requested_by, reason, reversal_of_job_id,
+              created_at, status, submitted_at, decision_by, decision_at
+       FROM change_plans ORDER BY created_at ASC, plan_id ASC`,
+    )
+    .all() as HistoricalPlanRow[];
+  for (const plan of plans) {
+    const items = database
+      .prepare(
+        `SELECT ordinal, channel_id, setting_key, subject_id,
+                before_json, after_json
+         FROM change_plan_items WHERE plan_id = ? ORDER BY ordinal ASC`,
+      )
+      .all(plan.plan_id) as HistoricalItemRow[];
+    for (const item of items) {
+      appendPlanAuditEvent(database, {
+        guildId: plan.guild_id,
+        actorId: plan.requested_by,
+        reason: plan.reason,
+        action: plan.reversal_of_job_id
+          ? "reversal_preview_created"
+          : "preview_created",
+        planId: plan.plan_id,
+        jobId: plan.reversal_of_job_id,
+        ordinal: item.ordinal,
+        channelId: item.channel_id,
+        settingKey: item.setting_key,
+        subjectId: item.subject_id,
+        before: JSON.parse(item.before_json),
+        after: JSON.parse(item.after_json),
+        outcome: "historical_baseline",
+        details:
+          "Baseline imported during the audit migration; earlier event history is unavailable.",
+        createdAt: parseHistoricalDate(plan.created_at),
+      });
+    }
+    if (plan.submitted_at) {
+      appendPlanAuditEvent(database, {
+        guildId: plan.guild_id,
+        actorId: plan.requested_by,
+        reason: plan.reason,
+        action: "plan_submitted",
+        planId: plan.plan_id,
+        outcome: "historical_baseline",
+        details:
+          "Submission metadata imported during the audit migration; earlier event history is unavailable.",
+        createdAt: parseHistoricalDate(plan.submitted_at),
+      });
+    }
+    if (plan.decision_by && plan.decision_at) {
+      const action =
+        plan.status === "rejected"
+          ? "plan_rejected"
+          : plan.status === "conflicted"
+            ? "plan_conflicted"
+            : "plan_approved";
+      appendPlanAuditEvent(database, {
+        guildId: plan.guild_id,
+        actorId: plan.decision_by,
+        approverId: plan.decision_by,
+        reason: plan.reason,
+        action,
+        planId: plan.plan_id,
+        outcome: plan.status,
+        details:
+          "Decision metadata imported during the audit migration; earlier event history is unavailable.",
+        createdAt: parseHistoricalDate(plan.decision_at),
+      });
+    } else if (plan.status === "expired") {
+      appendPlanAuditEvent(database, {
+        guildId: plan.guild_id,
+        actorId: plan.requested_by,
+        reason: plan.reason,
+        action: "plan_expired",
+        planId: plan.plan_id,
+        outcome: "expired",
+        details:
+          "Expired plan state imported during the audit migration; earlier event history is unavailable.",
+      });
+    }
+
+    const jobs = database
+      .prepare(
+        `SELECT job_id, approved_by, created_by, created_at, started_at,
+                finished_at, status
+         FROM plan_jobs WHERE guild_id = ? AND plan_id = ? ORDER BY created_at`,
+      )
+      .all(plan.guild_id, plan.plan_id) as HistoricalJobRow[];
+    for (const job of jobs) {
+      const appendJobEvent = (
+        action:
+          | "job_queued"
+          | "job_started"
+          | "job_reconciliation_required"
+          | "job_finished",
+        outcome: string,
+        createdAt: string | null,
+      ) =>
+        appendPlanAuditEvent(database, {
+          guildId: plan.guild_id,
+          actorId: job.created_by,
+          approverId: job.approved_by,
+          reason: plan.reason,
+          action,
+          planId: plan.plan_id,
+          jobId: job.job_id,
+          outcome,
+          details:
+            "Job state imported during the audit migration; earlier event history is unavailable.",
+          ...(createdAt ? { createdAt: parseHistoricalDate(createdAt) } : {}),
+        });
+      appendJobEvent("job_queued", "queued", job.created_at);
+      if (job.started_at)
+        appendJobEvent("job_started", "running", job.started_at);
+
+      const jobItems = database
+        .prepare(
+          `SELECT i.ordinal, i.status, i.attempts, i.last_error,
+                  i.started_at, i.finished_at,
+                  c.channel_id, c.setting_key, c.subject_id,
+                  c.before_json, c.after_json
+           FROM plan_job_items i
+           JOIN change_plan_items c
+             ON c.plan_id = i.plan_id AND c.ordinal = i.ordinal
+           WHERE i.job_id = ? ORDER BY i.ordinal ASC`,
+        )
+        .all(job.job_id) as (HistoricalJobItemRow & HistoricalItemRow)[];
+      for (const item of jobItems) {
+        const action =
+          item.status === "applying"
+            ? "item_attempt_started"
+            : item.status === "pending" && item.attempts > 0
+              ? "item_retry_scheduled"
+              : item.status === "applied" ||
+                  item.status === "failed" ||
+                  item.status === "conflicted" ||
+                  item.status === "cancelled"
+                ? "item_outcome"
+                : null;
+        if (!action) continue;
+        const historicalItemAt =
+          item.finished_at ??
+          item.started_at ??
+          job.started_at ??
+          job.created_at;
+        appendPlanAuditEvent(database, {
+          guildId: plan.guild_id,
+          actorId: job.created_by,
+          approverId: job.approved_by,
+          reason: plan.reason,
+          action,
+          planId: plan.plan_id,
+          jobId: job.job_id,
+          ordinal: item.ordinal,
+          channelId: item.channel_id,
+          settingKey: item.setting_key,
+          subjectId: item.subject_id,
+          before: JSON.parse(item.before_json),
+          after: JSON.parse(item.after_json),
+          outcome: item.status,
+          details: [
+            "Item state imported during the audit migration; earlier event history is unavailable.",
+            `${item.attempts} prior attempt(s).`,
+            item.last_error,
+          ]
+            .filter(Boolean)
+            .join(" ")
+            .slice(0, 1_000),
+          createdAt: parseHistoricalDate(historicalItemAt),
+        });
+      }
+
+      if (job.status === "reconciliation_required") {
+        appendJobEvent(
+          "job_reconciliation_required",
+          job.status,
+          job.started_at ?? job.created_at,
+        );
+      } else if (job.finished_at) {
+        appendJobEvent("job_finished", job.status, job.finished_at);
+      }
+    }
+  }
+}
+
+function parseHistoricalDate(value: string): Date {
+  const date = new Date(value);
+  return Number.isFinite(date.getTime()) ? date : new Date();
+}

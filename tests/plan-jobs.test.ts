@@ -19,6 +19,7 @@ import {
   requestPlanJobCancellation,
   setPlanJobItemStatus,
 } from "../src/storage/plan-jobs.js";
+import { listPlanAuditEvents } from "../src/storage/plan-audit.js";
 
 const guildId = "11111111111111111";
 const requesterId = "22222222222222222";
@@ -49,7 +50,12 @@ function createApprovedPlan() {
   const database = openDatabase(":memory:");
   const plan = createChangePlan(
     database,
-    { guildId, requestedBy: requesterId, changes: changes() },
+    {
+      guildId,
+      requestedBy: requesterId,
+      reason: "Adjust temporary test settings.",
+      changes: changes(),
+    },
     now,
   );
   submitChangePlanForApproval(database, guildId, plan.id, requesterId, now);
@@ -128,6 +134,115 @@ test("item attempt state persists across retries and terminal completion", () =>
       ],
     );
     assert.equal(getChangePlan(database, guildId, planId)?.status, "applied");
+    const auditPage = listPlanAuditEvents(database, guildId, planId);
+    const audit = auditPage.events;
+    const applied = audit.find(
+      (event) =>
+        event.action === "item_outcome" &&
+        event.outcome === "applied" &&
+        event.ordinal === 0,
+    );
+    assert.equal(applied?.actorId, executorId);
+    assert.equal(applied?.approverId, approverId);
+    assert.equal(applied?.jobId, job.id);
+    assert.equal(applied?.reason, "Adjust temporary test settings.");
+    assert.equal(applied?.before, "old topic");
+    assert.equal(applied?.after, "new topic");
+    assert.ok(audit.some((event) => event.action === "job_finished"));
+    const firstPage = listPlanAuditEvents(database, guildId, planId, 2);
+    assert.ok(firstPage.nextBeforeEventId);
+    const secondPage = listPlanAuditEvents(
+      database,
+      guildId,
+      planId,
+      2,
+      firstPage.nextBeforeEventId,
+    );
+    assert.equal(secondPage.events.length, 2);
+    assert.ok(
+      firstPage.events.every(
+        (event) =>
+          !secondPage.events.some((nextEvent) => nextEvent.id === event.id),
+      ),
+    );
+    assert.throws(
+      () =>
+        database
+          .prepare("UPDATE plan_audit_events SET outcome = 'edited'")
+          .run(),
+      /append-only/,
+    );
+  } finally {
+    database.close();
+  }
+});
+
+test("a reversal is a new plan that must exactly swap every applied item", () => {
+  const { database, planId } = createApprovedPlan();
+  try {
+    const job = enqueueApprovedPlan(database, guildId, planId, executorId, now);
+    claimPlanJob(database, guildId, job.id);
+    setPlanJobItemStatus(database, guildId, job.id, 0, "applied", null);
+    setPlanJobItemStatus(database, guildId, job.id, 1, "applied", null);
+    finalizePlanJob(database, guildId, job.id, "applied", "applied");
+    const original = getChangePlan(database, guildId, planId);
+    assert.ok(original);
+    const reversedChanges: ChangePlanChange[] = [
+      {
+        channelId: channelA,
+        settingKey: "channel.topic",
+        before: "new topic",
+        after: "old topic",
+      },
+      {
+        channelId: channelB,
+        settingKey: "channel.slowmode",
+        before: 5,
+        after: 0,
+      },
+    ];
+
+    const reversed = createChangePlan(database, {
+      guildId,
+      requestedBy: requesterId,
+      reason: "Restore the test settings.",
+      sourceSnapshotId: original.sourceSnapshotId,
+      reversalOfJobId: job.id,
+      changes: reversedChanges,
+    });
+    assert.equal(reversed.status, "preview");
+    assert.equal(reversed.reversalOfJobId, job.id);
+    assert.equal(reversed.reason, "Restore the test settings.");
+    assert.ok(
+      listPlanAuditEvents(database, guildId, reversed.id).events.some(
+        (event) =>
+          event.action === "reversal_preview_created" && event.jobId === job.id,
+      ),
+    );
+
+    assert.throws(
+      () =>
+        createChangePlan(database, {
+          guildId,
+          requestedBy: requesterId,
+          reversalOfJobId: job.id,
+          changes: [
+            {
+              channelId: channelA,
+              settingKey: "channel.topic",
+              before: "not the applied value",
+              after: "old topic",
+            },
+            {
+              channelId: channelB,
+              settingKey: "channel.slowmode",
+              before: 5,
+              after: 0,
+            },
+          ],
+        }),
+      /exactly swap/,
+    );
   } finally {
     database.close();
   }
@@ -146,7 +261,7 @@ test("cancellation is a durable request and cancels only pending items", () => {
     claimPlanJob(database, guildId, job.id);
     beginPlanJobItemAttempt(database, guildId, job.id, 0);
     setPlanJobItemStatus(database, guildId, job.id, 0, "applied", null);
-    requestPlanJobCancellation(database, guildId, job.id);
+    requestPlanJobCancellation(database, guildId, job.id, executorId);
     cancelPendingPlanJobItems(database, job.id);
     finalizePlanJob(database, guildId, job.id, "cancelled", "partial");
 

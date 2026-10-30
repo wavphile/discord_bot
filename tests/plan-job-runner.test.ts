@@ -283,7 +283,7 @@ test("cancels only between items and records partial work", async () => {
   let runner: DurablePlanJobRunner;
   const fake = fakeAdapter(changes, async (change) => {
     if (change.channelId === channelA) {
-      runner.requestCancellation(guildId, job.id);
+      runner.requestCancellation(guildId, job.id, approverId);
     }
   });
   runner = createRunner(database, fake.adapter);

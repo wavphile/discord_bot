@@ -7,6 +7,7 @@ import type {
 } from "../features/durable-plan-jobs.js";
 import type { ChangePlanStatus } from "../features/change-plans.js";
 import { getChangePlan } from "./change-plans.js";
+import { appendPlanAuditEvent, type PlanAuditAction } from "./plan-audit.js";
 
 type PlanJobRow = Readonly<{
   job_id: string;
@@ -140,6 +141,15 @@ export function enqueueApprovedPlan(
     if (Number(transitioned.changes) !== 1) {
       throw new PlanJobStorageError("raced");
     }
+    appendJobAuditEvent(
+      database,
+      guildId,
+      jobId,
+      "job_queued",
+      "queued",
+      null,
+      now,
+    );
     database.exec("COMMIT;");
   } catch (error) {
     if (database.isTransaction) database.exec("ROLLBACK;");
@@ -225,6 +235,7 @@ export function getPlanJob(
     requestedBy: row.requested_by,
     approvedBy: row.approved_by,
     createdBy: row.created_by,
+    reason: plan.reason,
     createdAt: row.created_at,
     startedAt: row.started_at,
     finishedAt: row.finished_at,
@@ -274,14 +285,34 @@ export function claimPlanJob(
   now = new Date(),
 ): boolean {
   validateInputs(guildId, jobId, guildId, now);
-  const result = database
-    .prepare(
-      `UPDATE plan_jobs SET status = 'running', started_at = COALESCE(started_at, ?)
-       WHERE guild_id = ? AND job_id = ?
-         AND status IN ('queued', 'running', 'reconciliation_required')`,
-    )
-    .run(now.toISOString(), guildId, jobId);
-  return Number(result.changes) === 1;
+  database.exec("BEGIN IMMEDIATE;");
+  try {
+    const result = database
+      .prepare(
+        `UPDATE plan_jobs SET status = 'running', started_at = COALESCE(started_at, ?)
+         WHERE guild_id = ? AND job_id = ?
+           AND status IN ('queued', 'running', 'reconciliation_required')`,
+      )
+      .run(now.toISOString(), guildId, jobId);
+    if (Number(result.changes) !== 1) {
+      database.exec("COMMIT;");
+      return false;
+    }
+    appendJobAuditEvent(
+      database,
+      guildId,
+      jobId,
+      "job_started",
+      "running",
+      null,
+      now,
+    );
+    database.exec("COMMIT;");
+    return true;
+  } catch (error) {
+    if (database.isTransaction) database.exec("ROLLBACK;");
+    throw error;
+  }
 }
 
 export function beginPlanJobItemAttempt(
@@ -322,6 +353,16 @@ export function beginPlanJobItemAttempt(
         "SELECT attempts FROM plan_job_items WHERE job_id = ? AND ordinal = ?",
       )
       .get(jobId, ordinal) as { attempts: number } | undefined;
+    appendJobItemAuditEvent(
+      database,
+      guildId,
+      jobId,
+      ordinal,
+      "item_attempt_started",
+      "applying",
+      `Attempt ${item?.attempts ?? 1} started.`,
+      now,
+    );
     database.exec("COMMIT;");
     if (!item) throw new PlanJobStorageError("not_found");
     return item.attempts;
@@ -345,41 +386,89 @@ export function setPlanJobItemStatus(
     throw new RangeError("Plan job item error text is too long.");
   }
   const terminal = status !== "pending";
-  const result = database
-    .prepare(
-      `UPDATE plan_job_items SET status = ?, last_error = ?,
-         finished_at = ?
-       WHERE job_id = ? AND ordinal = ? AND status IN ('pending', 'applying')`,
-    )
-    .run(
-      status,
-      lastError,
-      terminal ? now.toISOString() : null,
+  database.exec("BEGIN IMMEDIATE;");
+  try {
+    const result = database
+      .prepare(
+        `UPDATE plan_job_items SET status = ?, last_error = ?,
+           finished_at = ?
+         WHERE job_id = ? AND ordinal = ? AND status IN ('pending', 'applying')`,
+      )
+      .run(
+        status,
+        lastError,
+        terminal ? now.toISOString() : null,
+        jobId,
+        ordinal,
+      );
+    if (Number(result.changes) !== 1) throw new PlanJobStorageError("raced");
+    const action: PlanAuditAction =
+      status === "pending"
+        ? "item_retry_scheduled"
+        : lastError?.startsWith("Recovered after restart:") ||
+            lastError?.startsWith(
+              "Discord confirmed the planned value after an ambiguous response.",
+            )
+          ? "item_reconciled"
+          : "item_outcome";
+    appendJobItemAuditEvent(
+      database,
+      guildId,
       jobId,
       ordinal,
+      action,
+      status,
+      lastError,
+      now,
     );
-  if (Number(result.changes) !== 1) throw new PlanJobStorageError("raced");
+    database.exec("COMMIT;");
+  } catch (error) {
+    if (database.isTransaction) database.exec("ROLLBACK;");
+    throw error;
+  }
 }
 
 export function requestPlanJobCancellation(
   database: DatabaseSync,
   guildId: string,
   jobId: string,
+  actorId: string,
+  reason = "Cancellation requested.",
+  now = new Date(),
 ): void {
-  validateInputs(guildId, jobId, guildId, new Date());
-  const result = database
-    .prepare(
-      `UPDATE plan_jobs SET cancel_requested = 1
-       WHERE guild_id = ? AND job_id = ?
-         AND status IN ('queued', 'running', 'reconciliation_required')`,
-    )
-    .run(guildId, jobId);
-  if (Number(result.changes) !== 1) {
-    const job = database
-      .prepare("SELECT job_id FROM plan_jobs WHERE guild_id = ? AND job_id = ?")
-      .get(guildId, jobId);
-    if (!job) throw new PlanJobStorageError("not_found");
-    throw new PlanJobStorageError("wrong_status");
+  validateInputs(guildId, jobId, actorId, now);
+  database.exec("BEGIN IMMEDIATE;");
+  try {
+    const result = database
+      .prepare(
+        `UPDATE plan_jobs SET cancel_requested = 1
+         WHERE guild_id = ? AND job_id = ?
+           AND status IN ('queued', 'running', 'reconciliation_required')`,
+      )
+      .run(guildId, jobId);
+    if (Number(result.changes) !== 1) {
+      const job = database
+        .prepare(
+          "SELECT job_id FROM plan_jobs WHERE guild_id = ? AND job_id = ?",
+        )
+        .get(guildId, jobId);
+      if (!job) throw new PlanJobStorageError("not_found");
+      throw new PlanJobStorageError("wrong_status");
+    }
+    appendJobAuditEvent(
+      database,
+      guildId,
+      jobId,
+      "job_cancel_requested",
+      "cancellation_requested",
+      reason.trim() || "Cancellation requested.",
+      now,
+      actorId,
+    );
+    database.exec("COMMIT;");
+  } catch (error) {
+    if (database.isTransaction) database.exec("ROLLBACK;");
+    throw error;
   }
 }
 
@@ -388,12 +477,43 @@ export function cancelPendingPlanJobItems(
   jobId: string,
   now = new Date(),
 ): void {
-  database
-    .prepare(
-      `UPDATE plan_job_items SET status = 'cancelled', finished_at = ?
-       WHERE job_id = ? AND status = 'pending'`,
-    )
-    .run(now.toISOString(), jobId);
+  database.exec("BEGIN IMMEDIATE;");
+  try {
+    const job = database
+      .prepare("SELECT guild_id FROM plan_jobs WHERE job_id = ?")
+      .get(jobId) as { guild_id: string } | undefined;
+    if (!job) throw new PlanJobStorageError("not_found");
+    const pending = database
+      .prepare(
+        "SELECT ordinal FROM plan_job_items WHERE job_id = ? AND status = 'pending' ORDER BY ordinal",
+      )
+      .all(jobId) as { ordinal: number }[];
+    const result = database
+      .prepare(
+        `UPDATE plan_job_items SET status = 'cancelled', finished_at = ?
+         WHERE job_id = ? AND status = 'pending'`,
+      )
+      .run(now.toISOString(), jobId);
+    if (Number(result.changes) !== pending.length) {
+      throw new PlanJobStorageError("raced");
+    }
+    for (const item of pending) {
+      appendJobItemAuditEvent(
+        database,
+        job.guild_id,
+        jobId,
+        item.ordinal,
+        "item_cancelled",
+        "cancelled",
+        "Cancelled before execution completed.",
+        now,
+      );
+    }
+    database.exec("COMMIT;");
+  } catch (error) {
+    if (database.isTransaction) database.exec("ROLLBACK;");
+    throw error;
+  }
 }
 
 export function finalizePlanJob(
@@ -420,6 +540,15 @@ export function finalizePlanJob(
            WHERE guild_id = ? AND job_id = ?`,
         )
         .run(guildId, jobId);
+      appendJobAuditEvent(
+        database,
+        guildId,
+        jobId,
+        "job_reconciliation_required",
+        "reconciliation_required",
+        "An interrupted write could not be verified; later jobs are blocked.",
+        now,
+      );
       database.exec("COMMIT;");
       return;
     }
@@ -458,6 +587,15 @@ export function finalizePlanJob(
     if (Number(planUpdate.changes) !== 1) {
       throw new PlanJobStorageError("raced");
     }
+    appendJobAuditEvent(
+      database,
+      guildId,
+      jobId,
+      "job_finished",
+      jobStatus,
+      `Plan outcome: ${planStatus}.`,
+      now,
+    );
     database.exec("COMMIT;");
   } catch (error) {
     if (database.isTransaction) database.exec("ROLLBACK;");
@@ -480,6 +618,100 @@ function validateInputs(
   if (!(now instanceof Date) || !Number.isFinite(now.getTime())) {
     throw new TypeError("Plan job time must be a valid date.");
   }
+}
+
+function appendJobAuditEvent(
+  database: DatabaseSync,
+  guildId: string,
+  jobId: string,
+  action: PlanAuditAction,
+  outcome: string,
+  details: string | null,
+  now: Date,
+  actorId?: string,
+): void {
+  const row = database
+    .prepare(
+      `SELECT j.plan_id, j.requested_by, j.approved_by, j.created_by, p.reason
+       FROM plan_jobs j JOIN change_plans p ON p.plan_id = j.plan_id
+       WHERE j.guild_id = ? AND j.job_id = ?`,
+    )
+    .get(guildId, jobId) as
+    | {
+        plan_id: string;
+        requested_by: string;
+        approved_by: string;
+        created_by: string;
+        reason: string;
+      }
+    | undefined;
+  if (!row) throw new PlanJobStorageError("not_found");
+  appendPlanAuditEvent(database, {
+    guildId,
+    actorId: actorId ?? row.created_by,
+    approverId: row.approved_by,
+    reason: details && action === "job_cancel_requested" ? details : row.reason,
+    action,
+    planId: row.plan_id,
+    jobId,
+    outcome,
+    details,
+    createdAt: now,
+  });
+}
+
+function appendJobItemAuditEvent(
+  database: DatabaseSync,
+  guildId: string,
+  jobId: string,
+  ordinal: number,
+  action: PlanAuditAction,
+  outcome: string,
+  details: string | null,
+  now: Date,
+): void {
+  const row = database
+    .prepare(
+      `SELECT j.plan_id, j.approved_by, j.created_by, p.reason,
+              c.channel_id, c.setting_key, c.subject_id,
+              c.before_json, c.after_json
+       FROM plan_jobs j
+       JOIN change_plans p ON p.plan_id = j.plan_id
+       JOIN change_plan_items c ON c.plan_id = j.plan_id
+       WHERE j.guild_id = ? AND j.job_id = ? AND c.ordinal = ?`,
+    )
+    .get(guildId, jobId, ordinal) as
+    | {
+        plan_id: string;
+        approved_by: string;
+        created_by: string;
+        reason: string;
+        channel_id: string;
+        setting_key: string;
+        subject_id: string | null;
+        before_json: string;
+        after_json: string;
+      }
+    | undefined;
+  if (!row) throw new PlanJobStorageError("not_found");
+  appendPlanAuditEvent(database, {
+    guildId,
+    actorId: row.created_by,
+    approverId: row.approved_by,
+    reason: row.reason,
+    action,
+    planId: row.plan_id,
+    jobId,
+    ordinal,
+    channelId: row.channel_id,
+    settingKey: row.setting_key,
+    subjectId: row.subject_id,
+    before: JSON.parse(row.before_json),
+    after: JSON.parse(row.after_json),
+    outcome,
+    details,
+    createdAt: now,
+  });
 }
 
 function isTimestamp(value: string): boolean {

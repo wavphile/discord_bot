@@ -31,9 +31,13 @@ import {
   formatChangePlanPreview,
   type ChangePlanChange,
 } from "../../features/change-plans.js";
+import { prepareReviewedReversal } from "../../features/plan-approval.js";
 import { describePlanJob } from "../../features/durable-plan-jobs.js";
 import type { DurablePlanJobRunner } from "../plan-job-runner.js";
-import { preflightChangePlanOnDiscord } from "../change-plan-preflight.js";
+import {
+  preflightChangePlanOnDiscord,
+  readPlanTargetOnDiscord,
+} from "../change-plan-preflight.js";
 import {
   approveChangePlan,
   ChangePlanTransitionError,
@@ -48,6 +52,7 @@ import {
   getPlanJob,
   PlanJobStorageError,
 } from "../../storage/plan-jobs.js";
+import { listPlanAuditEvents } from "../../storage/plan-audit.js";
 import {
   getLatestConfigurationSnapshots,
   UnsupportedSnapshotSchemaVersionError,
@@ -81,6 +86,15 @@ export const planCommand = new SlashCommandBuilder()
           .setDescription("New topic (up to 1,024 characters), or CLEAR.")
           .setMaxLength(1_024)
           .setRequired(true),
+      )
+      .addStringOption((option) =>
+        option
+          .setName("reason")
+          .setDescription(
+            "Why this change is requested (up to 500 characters).",
+          )
+          .setMaxLength(500)
+          .setRequired(false),
       ),
   )
   .addSubcommand((subcommand) =>
@@ -101,6 +115,15 @@ export const planCommand = new SlashCommandBuilder()
           .setMinValue(0)
           .setMaxValue(21_600)
           .setRequired(true),
+      )
+      .addStringOption((option) =>
+        option
+          .setName("reason")
+          .setDescription(
+            "Why this change is requested (up to 500 characters).",
+          )
+          .setMaxLength(500)
+          .setRequired(false),
       ),
   )
   .addSubcommand((subcommand) =>
@@ -143,6 +166,15 @@ export const planCommand = new SlashCommandBuilder()
             { name: "Inherit", value: "inherit" },
           )
           .setRequired(true),
+      )
+      .addStringOption((option) =>
+        option
+          .setName("reason")
+          .setDescription(
+            "Why this change is requested (up to 500 characters).",
+          )
+          .setMaxLength(500)
+          .setRequired(false),
       ),
   )
   .addSubcommand((subcommand) =>
@@ -182,6 +214,13 @@ export const planCommand = new SlashCommandBuilder()
           .setMinLength(36)
           .setMaxLength(36)
           .setRequired(true),
+      )
+      .addStringOption((option) =>
+        option
+          .setName("reason")
+          .setDescription("Optional approval note.")
+          .setMaxLength(500)
+          .setRequired(false),
       ),
   )
   .addSubcommand((subcommand) =>
@@ -195,6 +234,13 @@ export const planCommand = new SlashCommandBuilder()
           .setMinLength(36)
           .setMaxLength(36)
           .setRequired(true),
+      )
+      .addStringOption((option) =>
+        option
+          .setName("reason")
+          .setDescription("Why the plan is rejected.")
+          .setMaxLength(500)
+          .setRequired(false),
       ),
   )
   .addSubcommand((subcommand) =>
@@ -221,6 +267,13 @@ export const planCommand = new SlashCommandBuilder()
           .setMinLength(36)
           .setMaxLength(36)
           .setRequired(true),
+      )
+      .addStringOption((option) =>
+        option
+          .setName("reason")
+          .setDescription("Optional cancellation note.")
+          .setMaxLength(500)
+          .setRequired(false),
       ),
   )
   .addSubcommand((subcommand) =>
@@ -234,6 +287,47 @@ export const planCommand = new SlashCommandBuilder()
           .setMinLength(36)
           .setMaxLength(36)
           .setRequired(true),
+      ),
+  )
+  .addSubcommand((subcommand) =>
+    subcommand
+      .setName("reverse")
+      .setDescription("Preview a reversal for applied items in a job.")
+      .addStringOption((option) =>
+        option
+          .setName("job_id")
+          .setDescription("The full execution job UUID.")
+          .setMinLength(36)
+          .setMaxLength(36)
+          .setRequired(true),
+      )
+      .addStringOption((option) =>
+        option
+          .setName("reason")
+          .setDescription("Why this reversal is requested.")
+          .setMaxLength(500)
+          .setRequired(true),
+      ),
+  )
+  .addSubcommand((subcommand) =>
+    subcommand
+      .setName("audit")
+      .setDescription("Privately inspect audit history for a plan.")
+      .addStringOption((option) =>
+        option
+          .setName("plan_id")
+          .setDescription("The full plan UUID.")
+          .setMinLength(36)
+          .setMaxLength(36)
+          .setRequired(true),
+      )
+      .addStringOption((option) =>
+        option
+          .setName("before_event_id")
+          .setDescription("Show older entries after an audit page.")
+          .setMinLength(36)
+          .setMaxLength(36)
+          .setRequired(false),
       ),
   );
 
@@ -292,6 +386,14 @@ export async function executePlanCommand(
     }
     if (subcommand === "status") {
       await showJobStatus(interaction, database, context);
+      return;
+    }
+    if (subcommand === "reverse") {
+      await createReversalPreview(interaction, database, context);
+      return;
+    }
+    if (subcommand === "audit") {
+      await showPlanAudit(interaction, database, context);
     }
   } catch (error) {
     if (error instanceof ChangePlanTransitionError) {
@@ -377,7 +479,12 @@ async function cancelJob(
     );
     return;
   }
-  context.jobRunner.requestCancellation(guildId, jobId);
+  context.jobRunner.requestCancellation(
+    guildId,
+    jobId,
+    interaction.user.id,
+    interaction.options.getString("reason") ?? undefined,
+  );
   await editPrivateReply(
     interaction,
     `Cancellation requested for job \`${jobId}\`. Any current Discord operation will finish before the job stops.`,
@@ -416,6 +523,205 @@ async function showJobStatus(
   await sendPrivateMessages(interaction, describePlanJob(job));
 }
 
+async function createReversalPreview(
+  interaction: ChatInputCommandInteraction,
+  database: DatabaseSync,
+  context: PlanCommandContext | undefined,
+): Promise<void> {
+  const guild = interaction.guild;
+  const guildId = interaction.guildId;
+  if (!guild || !guildId) return;
+  const jobId = interaction.options.getString("job_id", true);
+  const job = getPlanJob(database, guildId, jobId);
+  if (!job) {
+    await editPrivateReply(
+      interaction,
+      "Plan execution job not found in this server.",
+    );
+    return;
+  }
+  const sourcePlan = getChangePlan(database, guildId, job.planId);
+  if (!sourcePlan) {
+    await editPrivateReply(interaction, "The source plan was not found.");
+    return;
+  }
+  const isOwner = job.requestedBy === interaction.user.id;
+  if (!isOwner && !isApprover(interaction, context)) {
+    await editPrivateReply(
+      interaction,
+      "Only the original requester or a configured approver can reverse this job.",
+    );
+    return;
+  }
+  if (
+    !["applied", "partial", "failed", "conflicted", "cancelled"].includes(
+      job.status,
+    )
+  ) {
+    await editPrivateReply(
+      interaction,
+      "The job must finish before a reversal can be prepared.",
+    );
+    return;
+  }
+  const appliedItems = job.items.filter((item) => item.status === "applied");
+  if (appliedItems.length === 0) {
+    await editPrivateReply(
+      interaction,
+      "This job has no successfully applied items to reverse.",
+    );
+    return;
+  }
+
+  const reads = await Promise.all(
+    appliedItems.map(async (item) => ({
+      item,
+      read: await readPlanTargetOnDiscord(guild, item.change),
+    })),
+  );
+  const preparation = prepareReviewedReversal(
+    appliedItems.map(({ ordinal, change }) => ({ ordinal, change })),
+    reads.map(({ item, read }) => ({
+      ordinal: item.ordinal,
+      current: read.current,
+      readable: read.readable,
+      targetAvailable: read.targetAvailable,
+      ...(read.reason ? { reason: read.reason } : {}),
+    })),
+  );
+  if (!preparation.ready) {
+    await sendPrivateMessages(interaction, [
+      "No reversal plan was created. At least one applied setting changed or could not be read:",
+      ...preparation.issues.map(
+        (issue) =>
+          `• Item ${issue.ordinal + 1}, channel \`${issue.channelId}\`: ${issue.reason}`,
+      ),
+      "Resolve the differences and create a fresh plan from the current values if a reversal is still needed.",
+    ]);
+    return;
+  }
+
+  const reason = interaction.options.getString("reason", true);
+  const channelNames = new Map<string, string>();
+  const roleNames = new Map<string, string>();
+  for (const { item, read } of reads) {
+    if (read.channel)
+      channelNames.set(item.change.channelId, read.channel.name);
+    if (item.change.settingKey === "channel.role_overwrite") {
+      const role = guild.roles.cache.get(item.change.roleId);
+      roleNames.set(item.change.roleId, role?.name ?? item.change.roleId);
+    }
+  }
+  const reversal = createChangePlan(database, {
+    guildId,
+    requestedBy: interaction.user.id,
+    sourceSnapshotId: sourcePlan.sourceSnapshotId,
+    reason,
+    reversalOfJobId: job.id,
+    changes: preparation.changes,
+  });
+  await sendPrivateMessages(interaction, [
+    ...formatChangePlanPreview(reversal, new Date(), {
+      channels: channelNames,
+      roles: roleNames,
+    }),
+    `This is a new reversal plan for job \`${job.id}\`. Submit it for independent approval; no Discord settings have been changed.`,
+  ]);
+}
+
+async function showPlanAudit(
+  interaction: ChatInputCommandInteraction,
+  database: DatabaseSync,
+  context: PlanCommandContext | undefined,
+): Promise<void> {
+  const guildId = interaction.guildId;
+  if (!guildId) return;
+  const planId = interaction.options.getString("plan_id", true);
+  const plan = getChangePlan(database, guildId, planId);
+  if (!plan) {
+    await editPrivateReply(
+      interaction,
+      "Change plan not found in this server.",
+    );
+    return;
+  }
+  const canInspect =
+    plan.requestedBy === interaction.user.id ||
+    isApprover(interaction, context);
+  if (!canInspect) {
+    await editPrivateReply(
+      interaction,
+      "Only the original requester or a configured approver can inspect this audit history.",
+    );
+    return;
+  }
+  const beforeEventId =
+    interaction.options.getString("before_event_id") ?? undefined;
+  const page = listPlanAuditEvents(
+    database,
+    guildId,
+    plan.id,
+    50,
+    beforeEventId,
+  );
+  const events = page.events;
+  if (events.length === 0) {
+    await editPrivateReply(
+      interaction,
+      beforeEventId
+        ? "There are no older audit events for this plan."
+        : "No audit events were recorded for this plan.",
+    );
+    return;
+  }
+  const messages = [`Audit history for plan \`${plan.id}\` (${plan.status}):`];
+  for (const event of events) {
+    const target = event.channelId
+      ? ` · channel \`${event.channelId}\`${event.settingKey ? ` · ${event.settingKey}` : ""}`
+      : "";
+    const subject = event.subjectId ? ` · subject \`${event.subjectId}\`` : "";
+    const values =
+      event.before === null && event.after === null
+        ? ""
+        : ` · before \`${formatAuditValue(event.before)}\` → after \`${formatAuditValue(event.after)}\``;
+    const approver = event.approverId
+      ? ` · approver \`${event.approverId}\``
+      : "";
+    const details = event.details
+      ? ` · ${truncateAuditText(event.details, 300)}`
+      : "";
+    const line = `• <t:${Math.floor(Date.parse(event.createdAt) / 1_000)}:f> · **${event.action}** (${truncateAuditText(event.outcome, 100)}) · actor \`${event.actorId}\`${approver}${target}${subject}${values}\n  Reason: ${truncateAuditText(event.reason, 300)}${details}`;
+    const lastIndex = messages.length - 1;
+    if ((messages[lastIndex]?.length ?? 0) + line.length + 1 > 1_750) {
+      messages.push(`Audit history for plan \`${plan.id}\` (continued):`);
+    }
+    messages[messages.length - 1] += `\n${line}`;
+  }
+  if (page.nextBeforeEventId) {
+    messages.push(
+      `Older events are available. Run \`/plan audit plan_id:${plan.id} before_event_id:${page.nextBeforeEventId}\` to continue.`,
+    );
+  }
+  await sendPrivateMessages(interaction, messages);
+}
+
+function truncateAuditText(value: string, maxLength: number): string {
+  const escaped = escapeAuditText(value);
+  if (escaped.length <= maxLength) return escaped;
+  return `${escaped.slice(0, maxLength - 1)}…`;
+}
+
+function formatAuditValue(value: unknown): string {
+  const serialized = JSON.stringify(value) ?? "null";
+  return escapeAuditText(serialized).slice(0, 180);
+}
+
+function escapeAuditText(value: string): string {
+  return escapeMarkdown(value)
+    .replace(/@(everyone|here)/gi, "@​$1")
+    .replace(/[\r\n]+/g, " ");
+}
+
 async function createTopicPreview(
   interaction: ChatInputCommandInteraction,
   database: DatabaseSync,
@@ -436,7 +742,14 @@ async function createTopicPreview(
     return { id: channel.id, name: channel.name, topic: channel.topic };
   });
   const result = buildTopicChanges(targets, after);
-  await saveAndReply(interaction, database, result, channels);
+  await saveAndReply(
+    interaction,
+    database,
+    result,
+    channels,
+    undefined,
+    interaction.options.getString("reason") ?? undefined,
+  );
 }
 
 async function createSlowmodePreview(
@@ -463,7 +776,14 @@ async function createSlowmodePreview(
     };
   });
   const result = buildSlowmodeChanges(targets, after);
-  await saveAndReply(interaction, database, result, channels);
+  await saveAndReply(
+    interaction,
+    database,
+    result,
+    channels,
+    undefined,
+    interaction.options.getString("reason") ?? undefined,
+  );
 }
 
 async function createPermissionPreview(
@@ -528,7 +848,14 @@ async function createPermissionPreview(
   });
 
   const result = buildRoleOverwriteChanges(targets, role.id, permission, state);
-  await saveAndReply(interaction, database, result, channels, role.name);
+  await saveAndReply(
+    interaction,
+    database,
+    result,
+    channels,
+    role.name,
+    interaction.options.getString("reason") ?? undefined,
+  );
 }
 
 async function submitPlan(
@@ -668,6 +995,11 @@ async function approvePlan(
       guildId,
       plan.id,
       interaction.user.id,
+      new Date(),
+      preflight.issues
+        .map((issue) => issue.reason)
+        .join("; ")
+        .slice(0, 500),
     );
     const messages = [
       `Plan \`${conflicted.id}\` was marked conflicted. No Discord settings were changed.`,
@@ -687,10 +1019,12 @@ async function approvePlan(
     guildId,
     plan.id,
     interaction.user.id,
+    new Date(),
+    interaction.options.getString("reason") ?? undefined,
   );
   await sendPrivateMessages(interaction, [
     ...formatChangePlanPreview(approved),
-    `Approved by <@${interaction.user.id}> after a fresh read-only preflight. No Discord changes have been applied; execution is not available yet.`,
+    `Approved by <@${interaction.user.id}> after a fresh read-only preflight. No Discord changes have been applied. A configured approver can start execution with \`/plan apply\`.`,
   ]);
 }
 
@@ -713,6 +1047,8 @@ async function rejectPlan(
     guildId,
     interaction.options.getString("plan_id", true),
     interaction.user.id,
+    new Date(),
+    interaction.options.getString("reason") ?? undefined,
   );
   await editPrivateReply(
     interaction,
@@ -796,6 +1132,7 @@ async function saveAndReply(
   }>,
   channels: readonly GuildBasedChannel[],
   roleName?: string,
+  reason?: string,
 ): Promise<void> {
   const guildId = interaction.guildId;
   if (!guildId) return;
@@ -822,6 +1159,7 @@ async function saveAndReply(
     guildId,
     requestedBy: interaction.user.id,
     sourceSnapshotId,
+    reason,
     changes: result.changes,
   });
   const roleNames = new Map<string, string>();
