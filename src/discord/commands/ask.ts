@@ -2,7 +2,6 @@ import {
   ChannelType,
   escapeMarkdown,
   MessageFlags,
-  PermissionFlagsBits,
   SlashCommandBuilder,
   type ChatInputCommandInteraction,
   type GuildBasedChannel,
@@ -15,12 +14,18 @@ import {
   AiProviderError,
   AiUsageLimitError,
 } from "../../ai/errors.js";
-import type { AiProvider } from "../../ai/types.js";
+import type { AiPrompt, AiProvider } from "../../ai/types.js";
 import {
   buildConfigurationQuestionEvidence,
   hasCurrentViewAccess,
   MAX_QUESTION_LENGTH,
 } from "../../features/configuration-questions.js";
+import {
+  buildMemberQuestionEvidence,
+  isMemberActivityQuestion,
+  type MemberQuestionEvidence,
+  type MemberQuestionEvidenceError,
+} from "../../features/member-questions.js";
 import { generateForGuild } from "../../features/ai-generation.js";
 import { logger } from "../../observability/logger.js";
 import {
@@ -32,11 +37,13 @@ import type { SavedConfigurationSnapshot } from "../../storage/snapshots.js";
 
 export const askCommand = new SlashCommandBuilder()
   .setName("ask")
-  .setDescription("Ask a read-only question about saved server configuration.")
+  .setDescription(
+    "Ask a read-only question about server configuration or one member.",
+  )
   .addStringOption((option) =>
     option
       .setName("question")
-      .setDescription("A question about the selected channel's configuration.")
+      .setDescription("A question about the selected channel or member.")
       .setMinLength(1)
       .setMaxLength(MAX_QUESTION_LENGTH)
       .setRequired(true),
@@ -44,14 +51,13 @@ export const askCommand = new SlashCommandBuilder()
   .addChannelOption((option) =>
     option
       .setName("channel")
-      .setDescription("The channel whose saved configuration to use.")
-      .addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement)
-      .setRequired(true),
+      .setDescription("Optional channel for configuration or access questions.")
+      .addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement),
   )
   .addUserOption((option) =>
     option
       .setName("member")
-      .setDescription("Optional member for a channel-access question."),
+      .setDescription("Optional server member for a roles or access question."),
   );
 
 export type AskCommandLimits = Readonly<{
@@ -86,8 +92,24 @@ export async function executeAskCommand(
     return;
   }
 
-  const selectedChannel = interaction.options.getChannel("channel", true);
-  if (!isSupportedTextChannelOption(selectedChannel)) {
+  const selectedChannel = interaction.options.getChannel("channel");
+  const selectedUser = interaction.options.getUser("member");
+  if (!selectedChannel && !selectedUser) {
+    await interaction.reply({
+      content: "Select a channel, a member, or both to scope the question.",
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+  if (isMemberActivityQuestion(question)) {
+    await interaction.reply({
+      content:
+        "Message activity is unavailable because this bot has not collected messages. It will not infer a member's activity from roles or server configuration.",
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+  if (selectedChannel && !isSupportedTextChannelOption(selectedChannel)) {
     await interaction.reply({
       content: "Choose a text or announcement channel.",
       flags: MessageFlags.Ephemeral,
@@ -95,17 +117,18 @@ export async function executeAskCommand(
     return;
   }
 
-  const selectedUser = interaction.options.getUser("member");
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
   let requester: GuildMember;
-  let channel: GuildBasedChannel | null;
+  let channel: GuildBasedChannel | null = null;
   let targetMember: GuildMember | null = null;
   try {
     await guild.roles.fetch(undefined, { force: true });
     [requester, channel] = await Promise.all([
       guild.members.fetch({ user: interaction.user.id, force: true }),
-      guild.channels.fetch(selectedChannel.id, { force: true }),
+      selectedChannel
+        ? guild.channels.fetch(selectedChannel.id, { force: true })
+        : Promise.resolve(null),
     ]);
     if (selectedUser) {
       targetMember = await guild.members.fetch({
@@ -119,7 +142,7 @@ export async function executeAskCommand(
       await interaction.editReply("That user is not a member of this server.");
       return;
     }
-    if (code === 10_003 || code === 50_001) {
+    if (selectedChannel && (code === 10_003 || code === 50_001)) {
       await interaction.editReply(
         "The bot cannot read that channel's configuration. Grant the bot View Channel access there, then capture a new /server inspect snapshot.",
       );
@@ -128,62 +151,126 @@ export async function executeAskCommand(
     throw error;
   }
 
-  if (
-    !channel ||
-    !isSupportedTextChannel(channel) ||
-    channel.guildId !== guildId
-  ) {
+  if (guild.id !== guildId) {
     await interaction.editReply(
-      "That channel is not an available text or announcement channel in this server.",
-    );
-    return;
-  }
-  if (!hasCurrentViewAccess(channel.permissionsFor(requester) ?? null)) {
-    await interaction.editReply(
-      "You need current View Channel access to the selected channel before asking about its configuration.",
+      "This command can only be used in the configured test server.",
     );
     return;
   }
 
-  let snapshot;
-  try {
-    snapshot = getLatestConfigurationSnapshots(database, guildId, 1)[0];
-  } catch (error) {
-    if (error instanceof UnsupportedSnapshotSchemaVersionError) {
+  if (selectedUser && targetMember?.guild.id !== guildId) {
+    await interaction.editReply("That user is not a member of this server.");
+    return;
+  }
+
+  let prompt: AiPrompt;
+  let formatResponse: (answer: string) => string;
+  if (selectedChannel) {
+    if (
+      !channel ||
+      !isSupportedTextChannel(channel) ||
+      channel.guildId !== guildId
+    ) {
       await interaction.editReply(
-        "The latest server snapshot uses a different schema. Run /server inspect with the current bot version and try again.",
+        "That channel is not an available text or announcement channel in this server.",
       );
       return;
     }
-    throw error;
-  }
-  if (!snapshot) {
-    await interaction.editReply(
-      "There is no saved configuration snapshot yet. Run /server inspect, then try /ask again.",
-    );
-    return;
-  }
+    if (!hasCurrentViewAccess(channel.permissionsFor(requester) ?? null)) {
+      await interaction.editReply(
+        "You need current View Channel access to the selected channel before asking about its configuration.",
+      );
+      return;
+    }
 
-  const now = new Date();
-  const result = buildConfigurationQuestionEvidence({
-    question,
-    channelId: channel.id,
-    snapshot,
-    ...(targetMember
-      ? {
-          member: {
-            id: targetMember.id,
-            roleIds: [...targetMember.roles.cache.keys()],
-            guildOwnerId: guild.ownerId,
-            isTimedOut: targetMember.isCommunicationDisabled(),
-          },
-        }
-      : {}),
-    now,
-  });
-  if (!result.ok) {
-    await interaction.editReply(formatEvidenceProblem(result.reason, snapshot));
-    return;
+    let snapshot;
+    try {
+      snapshot = getLatestConfigurationSnapshots(database, guildId, 1)[0];
+    } catch (error) {
+      if (error instanceof UnsupportedSnapshotSchemaVersionError) {
+        await interaction.editReply(
+          "The latest server snapshot uses a different schema. Run /server inspect with the current bot version and try again.",
+        );
+        return;
+      }
+      throw error;
+    }
+    if (!snapshot) {
+      await interaction.editReply(
+        "There is no saved configuration snapshot yet. Run /server inspect, then try /ask again.",
+      );
+      return;
+    }
+
+    const now = new Date();
+    const result = buildConfigurationQuestionEvidence({
+      question,
+      channelId: channel.id,
+      snapshot,
+      ...(targetMember
+        ? {
+            member: {
+              id: targetMember.id,
+              roleIds: [...targetMember.roles.cache.keys()],
+              guildOwnerId: guild.ownerId,
+              isTimedOut: targetMember.isCommunicationDisabled(),
+            },
+          }
+        : {}),
+      now,
+    });
+    if (!result.ok) {
+      await interaction.editReply(
+        formatEvidenceProblem(result.reason, snapshot),
+      );
+      return;
+    }
+    prompt = result.evidence.prompt;
+    formatResponse = (answer) =>
+      formatAnswer(answer, result.evidence, provider.id);
+  } else {
+    if (!selectedUser || !targetMember) {
+      await interaction.editReply(
+        "Choose a member in the configured test server.",
+      );
+      return;
+    }
+
+    const roles = new Map([[guild.roles.everyone.id, guild.roles.everyone]]);
+    for (const role of targetMember.roles.cache.values()) {
+      roles.set(role.id, role);
+    }
+    const now = new Date();
+    const timeoutTimestamp = targetMember.communicationDisabledUntilTimestamp;
+    const result = buildMemberQuestionEvidence({
+      question,
+      guildId,
+      member: {
+        id: targetMember.id,
+        guildId: targetMember.guild.id,
+        roles: [...roles.values()].map((role) => ({
+          id: role.id,
+          guildId: role.guild.id,
+          name: role.name,
+          permissions: role.permissions.toArray(),
+        })),
+        joinedAt: targetMember.joinedAt?.toISOString() ?? null,
+        isServerOwner: targetMember.id === guild.ownerId,
+        isTimedOut: targetMember.isCommunicationDisabled(),
+        timeoutUntil:
+          timeoutTimestamp === null
+            ? null
+            : new Date(timeoutTimestamp).toISOString(),
+      },
+      now,
+    });
+    if (!result.ok) {
+      await interaction.editReply(formatMemberEvidenceProblem(result.reason));
+      return;
+    }
+    prompt = result.evidence.prompt;
+    formatResponse = (answer) =>
+      formatMemberAnswer(answer, result.evidence, provider.id);
   }
 
   try {
@@ -191,12 +278,11 @@ export async function executeAskCommand(
       database,
       provider,
       guildId,
-      result.evidence.prompt,
+      prompt,
       limits,
-      now,
     );
     await interaction.editReply({
-      content: formatAnswer(completion.text, result.evidence, provider.id),
+      content: formatResponse(completion.text),
       allowedMentions: { parse: [] },
     });
   } catch (error) {
@@ -255,6 +341,25 @@ function formatEvidenceProblem(
   }
 }
 
+function formatMemberEvidenceProblem(
+  reason: MemberQuestionEvidenceError,
+): string {
+  switch (reason) {
+    case "invalid_question":
+      return `Enter a question from 1 to ${MAX_QUESTION_LENGTH} characters.`;
+    case "activity_unavailable":
+      return "Message activity is unavailable because this bot has not collected messages. It will not infer a member's activity from roles or server configuration.";
+    case "member_data_too_large":
+      return "The member's role data exceeds the safe question limit. Try a channel-specific permission question or select a member with fewer roles.";
+    case "cross_guild_member":
+      return "That user is not a member of this server.";
+    case "cross_guild_role":
+      return "The member's roles could not be verified in this server.";
+    case "invalid_member":
+      return "The member details could not be validated. Try again later.";
+  }
+}
+
 function formatTimestamp(value: string): string {
   const timestamp = Date.parse(value);
   return Number.isFinite(timestamp)
@@ -301,6 +406,66 @@ function formatAnswer(
     }
   }
 
+  const footer = evidenceLines.join("\n");
+  const heading = `${label}\n\n`;
+  const footerBlock = `\n\n${footer}`;
+  const availableAnswerLength = Math.max(
+    0,
+    1_900 - heading.length - footerBlock.length,
+  );
+  const safeAnswer = escapeUntrustedText(answer.trim());
+  const clippedAnswer =
+    safeAnswer.length > availableAnswerLength
+      ? `${safeAnswer.slice(0, Math.max(0, availableAnswerLength - 1)).trimEnd()}…`
+      : safeAnswer;
+  return `${heading}${clippedAnswer}${footerBlock}`;
+}
+
+function formatMemberAnswer(
+  answer: string,
+  evidence: MemberQuestionEvidence,
+  providerId: string,
+): string {
+  const label =
+    providerId === "mock"
+      ? "**Mock provider test output; this is not an AI-generated factual answer.**"
+      : "**AI-generated member answer**";
+  const roleLines: string[] = [];
+  let roleSummaryLength = 0;
+  let omittedRoleCount = 0;
+  for (const [index, role] of evidence.roles.entries()) {
+    const safeRoleName = escapeUntrustedText(role.name).slice(0, 60);
+    const permissions = role.permissions.slice(0, 8).join(", ") || "none";
+    const omittedPermissionCount = Math.max(0, role.permissions.length - 8);
+    const permissionSuffix =
+      omittedPermissionCount > 0 ? `, +${omittedPermissionCount} more` : "";
+    const line = `- ${safeRoleName} (${role.id}): ${permissions}${permissionSuffix}`;
+    if (roleSummaryLength + line.length > 900) {
+      omittedRoleCount = evidence.roles.length - index;
+      break;
+    }
+    roleLines.push(line);
+    roleSummaryLength += line.length;
+  }
+  const roleSummary = roleLines.length > 0 ? roleLines.join("\n") : "none";
+  const roleSuffix =
+    omittedRoleCount > 0
+      ? `\n${omittedRoleCount} additional role(s) omitted from this response.`
+      : "";
+  const joinedAt = evidence.joinedAt
+    ? formatTimestamp(evidence.joinedAt)
+    : "not available";
+  const timeout = evidence.isTimedOut
+    ? `Active until ${formatTimestamp(evidence.timeoutUntil ?? evidence.observedAt)}`
+    : "No active communication timeout";
+  const evidenceLines = [
+    "**Evidence**",
+    `Member ID: ${evidence.memberId}`,
+    `Current roles and permissions read at <t:${Math.floor(Date.parse(evidence.observedAt) / 1_000)}:F>:\n${roleSummary}${roleSuffix}`,
+    `Joined server: ${joinedAt}.`,
+    `${timeout} at the observation time.`,
+    "Message activity: not collected; no activity claims are supported.",
+  ];
   const footer = evidenceLines.join("\n");
   const heading = `${label}\n\n`;
   const footerBlock = `\n\n${footer}`;

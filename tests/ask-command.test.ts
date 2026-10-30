@@ -11,6 +11,7 @@ import { saveConfigurationSnapshot } from "../src/storage/snapshots.js";
 const guildId = "11111111111111111";
 const channelId = "22222222222222222";
 const requesterId = "33333333333333333";
+const memberRoleId = "44444444444444444";
 
 function fixture(
   canView: boolean,
@@ -21,6 +22,9 @@ function fixture(
     selectedUserId?: string;
     question?: string;
     selectedUserIsForeign?: boolean;
+    memberGuildId?: string;
+    includeMemberRole?: boolean;
+    noChannel?: boolean;
   }> = {},
 ) {
   const replies: string[] = [];
@@ -29,10 +33,36 @@ function fixture(
   let lastPrompt: AiPrompt | undefined;
   let lastReply:
     { content: string; allowedMentions?: { parse: string[] } } | undefined;
+  const everyoneRole = {
+    id: guildId,
+    guild: { id: guildId },
+    name: "@everyone",
+    permissions: { toArray: () => ["ViewChannel"] },
+  };
+  const helperRole = {
+    id: memberRoleId,
+    guild: { id: guildId },
+    name: "Helper",
+    permissions: { toArray: () => ["SendMessages"] },
+  };
+  const requesterRoles = new Map([[guildId, everyoneRole]]);
+  const selectedMemberRoles = new Map([[guildId, everyoneRole]]);
+  if (options.includeMemberRole) {
+    selectedMemberRoles.set(memberRoleId, helperRole);
+  }
   const requester = {
     id: requesterId,
-    roles: { cache: new Map([[guildId, {}]]) },
+    guild: { id: guildId },
+    roles: { cache: requesterRoles },
+    joinedAt: new Date("2025-01-01T00:00:00.000Z"),
+    communicationDisabledUntilTimestamp: null,
     isCommunicationDisabled: () => false,
+  };
+  const targetMember = {
+    ...requester,
+    id: options.selectedUserId ?? requesterId,
+    guild: { id: options.memberGuildId ?? guildId },
+    roles: { cache: selectedMemberRoles },
   };
   const channel = {
     id: channelId,
@@ -43,13 +73,20 @@ function fixture(
   const guild = {
     id: guildId,
     ownerId: "99999999999999999",
-    roles: { fetch: async () => undefined },
+    roles: {
+      fetch: async () => undefined,
+      everyone: everyoneRole,
+      cache: new Map([
+        [guildId, everyoneRole],
+        [memberRoleId, helperRole],
+      ]),
+    },
     members: {
       fetch: async ({ user }: { user: string }) => {
         if (options.selectedUserIsForeign && user === options.selectedUserId) {
           throw Object.assign(new Error("not a member"), { code: 10_007 });
         }
-        return requester;
+        return user === requesterId ? requester : targetMember;
       },
     },
     channels: { fetch: async () => channel },
@@ -60,7 +97,7 @@ function fixture(
     user: { id: requesterId },
     options: {
       getString: () => options.question ?? "Why can a member see this channel?",
-      getChannel: () => channel,
+      getChannel: () => (options.noChannel ? null : channel),
       getUser: () =>
         options.selectedUserId ? { id: options.selectedUserId } : null,
     },
@@ -139,6 +176,83 @@ test("ask requests a snapshot before sending any question to a provider", async 
   try {
     await executeAskCommand(mock.interaction, database, mock.provider, limits);
     assert.match(mock.replies.at(-1) ?? "", /Run \/server inspect/);
+    assert.equal(mock.providerCalls(), 0);
+  } finally {
+    database.close();
+  }
+});
+
+test("ask answers a member-only roles question without requiring a snapshot", async () => {
+  const database = openDatabase(":memory:");
+  const mock = fixture(true, {
+    noChannel: true,
+    selectedUserId: "55555555555555555",
+    includeMemberRole: true,
+    question: "What roles and permissions does this member have?",
+  });
+  try {
+    await executeAskCommand(mock.interaction, database, mock.provider, limits);
+
+    const reply = mock.replies.at(-1) ?? "";
+    const prompt = mock.lastPrompt()?.input ?? "";
+    assert.match(reply, /Member ID: 55555555555555555/);
+    assert.match(reply, /Helper/);
+    assert.match(reply, /SendMessages/);
+    assert.match(reply, /Joined server: <t:/);
+    assert.match(reply, /Message activity: not collected/);
+    assert.match(prompt, /"permissions":\["ViewChannel"\]/);
+    assert.match(prompt, /"permissions":\["SendMessages"\]/);
+    assert.match(prompt, /"message_content":"not_collected"/);
+    assert.doesNotMatch(reply, /@everyone/);
+    assert.deepEqual(mock.lastReply()?.allowedMentions?.parse, []);
+    assert.equal(mock.generationCalls(), 1);
+  } finally {
+    database.close();
+  }
+});
+
+test("ask refuses message activity questions without sending a provider request", async () => {
+  const database = openDatabase(":memory:");
+  const mock = fixture(true, {
+    noChannel: true,
+    selectedUserId: "55555555555555555",
+    question: "What did this member say in their latest message?",
+  });
+  try {
+    await executeAskCommand(mock.interaction, database, mock.provider, limits);
+    assert.match(mock.replies.at(-1) ?? "", /has not collected messages/);
+    assert.equal(mock.providerCalls(), 0);
+    assert.equal(mock.generationCalls(), 0);
+  } finally {
+    database.close();
+  }
+});
+
+test("ask rejects member profile data from another server before generation", async () => {
+  const database = openDatabase(":memory:");
+  const mock = fixture(true, {
+    noChannel: true,
+    selectedUserId: "55555555555555555",
+    memberGuildId: "99999999999999999",
+  });
+  try {
+    await executeAskCommand(mock.interaction, database, mock.provider, limits);
+    assert.match(mock.replies.at(-1) ?? "", /not a member of this server/);
+    assert.equal(mock.providerCalls(), 0);
+  } finally {
+    database.close();
+  }
+});
+
+test("ask requires at least one selected channel or member", async () => {
+  const database = openDatabase(":memory:");
+  const mock = fixture(true, { noChannel: true });
+  try {
+    await executeAskCommand(mock.interaction, database, mock.provider, limits);
+    assert.match(
+      mock.replies.at(-1) ?? "",
+      /Select a channel, a member, or both/,
+    );
     assert.equal(mock.providerCalls(), 0);
   } finally {
     database.close();
