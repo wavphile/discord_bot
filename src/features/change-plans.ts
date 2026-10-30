@@ -71,18 +71,31 @@ export type PreparedChangePlan = Readonly<{
   changes: readonly ChangePlanChange[];
 }>;
 
+export type ChangePlanPreviewNames = Readonly<{
+  channels?: ReadonlyMap<string, string>;
+  roles?: ReadonlyMap<string, string>;
+}>;
+
+export const CHANGE_PLAN_PERMISSION_BITS = {
+  view_channel: 1n << 10n,
+  send_messages: 1n << 11n,
+  read_message_history: 1n << 16n,
+  connect: 1n << 20n,
+  speak: 1n << 21n,
+} as const;
+
 const snowflakePattern = /^\d{17,20}$/;
 const uuidPattern =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const maxPermissionBits = (1n << 64n) - 1n;
-const viewChannelBit = 1n << 10n;
-const sendMessagesBit = 1n << 11n;
-const readMessageHistoryBit = 1n << 16n;
-const connectBit = 1n << 20n;
-const speakBit = 1n << 21n;
 const selectedTextOverwriteBits =
-  viewChannelBit | sendMessagesBit | readMessageHistoryBit;
-const selectedVoiceOverwriteBits = viewChannelBit | connectBit | speakBit;
+  CHANGE_PLAN_PERMISSION_BITS.view_channel |
+  CHANGE_PLAN_PERMISSION_BITS.send_messages |
+  CHANGE_PLAN_PERMISSION_BITS.read_message_history;
+const selectedVoiceOverwriteBits =
+  CHANGE_PLAN_PERMISSION_BITS.view_channel |
+  CHANGE_PLAN_PERMISSION_BITS.connect |
+  CHANGE_PLAN_PERMISSION_BITS.speak;
 const previewMessageLimit = 1_850;
 const previewValuePartLimit = 900;
 
@@ -159,6 +172,7 @@ export function isChangePlanExpired(
 export function formatChangePlanPreview(
   plan: ChangePlan,
   now = new Date(),
+  names: ChangePlanPreviewNames = {},
 ): string[] {
   const expired =
     plan.status === "expired" ||
@@ -177,7 +191,12 @@ export function formatChangePlanPreview(
 
   const messages = [header];
   for (const [index, change] of plan.changes.entries()) {
-    const lines = formatChangeLines(index + 1, plan.changes.length, change);
+    const lines = formatChangeLines(
+      index + 1,
+      plan.changes.length,
+      change,
+      names,
+    );
     for (const line of lines) {
       let current = messages.at(-1);
       if (!current) throw new Error("A preview message could not be created.");
@@ -347,17 +366,59 @@ function formatChangeLines(
   index: number,
   total: number,
   change: ChangePlanChange,
+  names: ChangePlanPreviewNames,
 ): string[] {
-  const target = `Item ${index}/${total} · channel \`${escapeInline(change.channelId)}\``;
+  const channelName = names.channels?.get(change.channelId);
+  const channelLabel = channelName
+    ? `#${escapeInline(channelName)} (${escapeInline(change.channelId)})`
+    : escapeInline(change.channelId);
+  const target = `Item ${index}/${total} · channel \`${channelLabel}\``;
+  const roleName =
+    change.settingKey === "channel.role_overwrite"
+      ? names.roles?.get(change.roleId)
+      : undefined;
   const setting =
     change.settingKey === "channel.role_overwrite"
-      ? `${change.settingKey} for role \`${escapeInline(change.roleId)}\``
+      ? `${change.settingKey} · ${formatRolePermissionChanges(change)} for role \`${roleName ? `${escapeInline(roleName)} (${escapeInline(change.roleId)})` : escapeInline(change.roleId)}\``
       : change.settingKey;
   return [
     `${target} · ${setting}`,
     ...formatValueLines("Before", change.before),
     ...formatValueLines("After", change.after),
   ];
+}
+
+function formatRolePermissionChanges(
+  change: Extract<ChangePlanChange, { settingKey: "channel.role_overwrite" }>,
+): string {
+  const beforeAllow = BigInt(change.before?.allow ?? "0");
+  const beforeDeny = BigInt(change.before?.deny ?? "0");
+  const afterAllow = BigInt(change.after?.allow ?? "0");
+  const afterDeny = BigInt(change.after?.deny ?? "0");
+  const changed = (beforeAllow ^ afterAllow) | (beforeDeny ^ afterDeny);
+  const labels: Readonly<
+    Record<keyof typeof CHANGE_PLAN_PERMISSION_BITS, string>
+  > = {
+    view_channel: "View Channel",
+    send_messages: "Send Messages",
+    read_message_history: "Read Message History",
+    connect: "Connect",
+    speak: "Speak",
+  };
+
+  return Object.entries(CHANGE_PLAN_PERMISSION_BITS)
+    .filter(([, bit]) => (changed & bit) !== 0n)
+    .map(([key, bit]) => {
+      const state =
+        (afterAllow & bit) !== 0n
+          ? "allow"
+          : (afterDeny & bit) !== 0n
+            ? "deny"
+            : "inherit";
+      const label = labels[key as keyof typeof labels];
+      return `${label}: ${state}`;
+    })
+    .join(", ");
 }
 
 function formatValueLines(label: string, value: unknown): string[] {
