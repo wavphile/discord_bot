@@ -75,10 +75,10 @@ function createInput(
   };
 }
 
-test("migration 7 adds plan-audit and AI usage storage", () => {
+test("current schema keeps plan-audit and AI usage storage", () => {
   const database = openDatabase(":memory:");
   try {
-    assert.equal(getSchemaVersion(database), 7);
+    assert.equal(getSchemaVersion(database), 8);
     assert.equal(
       database
         .prepare(

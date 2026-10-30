@@ -34,13 +34,18 @@ test("member and message capabilities opt in only to their respective intents", 
   ]);
   assert.deepEqual(
     createGatewayIntents({ ...disabled, messageContent: true }),
-    [GatewayIntentBits.Guilds, GatewayIntentBits.MessageContent],
+    [
+      GatewayIntentBits.Guilds,
+      GatewayIntentBits.GuildMessages,
+      GatewayIntentBits.MessageContent,
+    ],
   );
   assert.deepEqual(
     createGatewayIntents({ guildMembers: true, messageContent: true }),
     [
       GatewayIntentBits.Guilds,
       GatewayIntentBits.GuildMembers,
+      GatewayIntentBits.GuildMessages,
       GatewayIntentBits.MessageContent,
     ],
   );
@@ -91,12 +96,12 @@ test("/health privately reports storage and configured optional intents", async 
     },
   };
 
-  await executeHealthCommand(interaction as never, 7, {
+  await executeHealthCommand(interaction as never, 8, {
     ...disabled,
     messageContent: true,
   });
 
-  assert.match(reply?.content ?? "", /schema v7/);
+  assert.match(reply?.content ?? "", /schema v8/);
   assert.match(reply?.content ?? "", /Server Members disabled/);
   assert.match(reply?.content ?? "", /Message Content enabled/);
   assert.equal(reply?.flags, MessageFlags.Ephemeral);

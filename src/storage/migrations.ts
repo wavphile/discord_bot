@@ -219,6 +219,30 @@ export const migrations: readonly Migration[] = [
       `);
     },
   },
+  {
+    version: 8,
+    name: "create_retained_messages",
+    up(database) {
+      database.exec(`
+        CREATE TABLE retained_messages (
+          guild_id TEXT NOT NULL,
+          message_id TEXT NOT NULL,
+          channel_id TEXT NOT NULL,
+          parent_channel_id TEXT,
+          created_at TEXT NOT NULL,
+          expires_at TEXT NOT NULL,
+          content TEXT NOT NULL CHECK (length(content) BETWEEN 1 AND 4000),
+          PRIMARY KEY (guild_id, message_id)
+        );
+        CREATE INDEX retained_messages_expiry
+          ON retained_messages (expires_at);
+        CREATE INDEX retained_messages_guild_channel
+          ON retained_messages (guild_id, channel_id);
+        CREATE INDEX retained_messages_guild_parent
+          ON retained_messages (guild_id, parent_channel_id);
+      `);
+    },
+  },
 ];
 
 type HistoricalPlanRow = Readonly<{

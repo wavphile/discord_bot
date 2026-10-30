@@ -12,6 +12,7 @@ import { executePermissionsCommand } from "./discord/commands/permissions.js";
 import { executeServerCommand } from "./discord/commands/server.js";
 import { executeMessagesCommand } from "./discord/commands/messages.js";
 import { executeSummarizeCommand } from "./discord/commands/summarize.js";
+import { registerMessageRetentionEvents } from "./discord/message-retention.js";
 import {
   createDiscordPlanJobAdapter,
   DurablePlanJobRunner,
@@ -50,6 +51,11 @@ const planJobRunner = new DurablePlanJobRunner(
   client,
   authorizationPolicy,
   createDiscordPlanJobAdapter(client, authorizationPolicy),
+);
+const stopMessageRetentionEvents = registerMessageRetentionEvents(
+  client,
+  database,
+  gatewayCapabilities,
 );
 let shuttingDown = false;
 
@@ -149,6 +155,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         database,
         env.AI_PROVIDER,
         aiProviders,
+        gatewayCapabilities,
       );
     } else if (interaction.commandName === "summarize") {
       await executeSummarizeCommand(
@@ -214,6 +221,7 @@ async function shutdown(signal: "SIGINT" | "SIGTERM"): Promise<void> {
   shuttingDown = true;
   logger.info("process.shutdown", { signal });
   await planJobRunner.stop();
+  stopMessageRetentionEvents();
   client.destroy();
   database.close();
 }

@@ -290,3 +290,26 @@ Live Discord `/plan suggest` and hosted-provider generation have not been exerci
 ### AI boundary adversarial checks
 
 The automated suite exercises injected instructions in questions and saved channel topics, and checks that generated `@everyone` text is escaped with mentions disabled. Structured plan suggestions reject fabricated channel-ID fields, unsupported output properties, foreign channel/role references, invalid indexes, and invalid setting values before plan persistence. Both AI commands deny channel access before provider calls; `/ask` also rejects channels and members from another server. Tests verify the ten-channel and token-count limits stop generation, while safe provider errors do not include provider response bodies in Discord replies or warning logs. As of October 30, 2026, all 105 automated tests, type checking, production build, changed-file formatting checks, and GitHub Actions pass. The final PR tryout registered five guild commands and started the bot with SQLite schema v7. No Discord slash command was submitted, and these checks use fake providers rather than a real OpenAI request.
+
+### Retained message storage and purge
+
+Persistence is separate from `/messages config enable`: retrieval alone never saves message text. A server administrator must explicitly opt each text or announcement channel into storage and choose its 1–7 day retention period. The bot needs **Manage Server**, current **View Channel** and **Read Message History** access, and the Message Content Intent enabled both in `.env` and in the Discord Developer Portal. When Message Content is requested, the bot also requests the non-privileged Guild Messages intent for message lifecycle events.
+
+Use only a private test channel with test content:
+
+```text
+/messages status
+/messages config storage-enable channel:#bots retention_days:1
+```
+
+Only new, human-authored messages received after the opt-in are retained; there is no history backfill. Threads inherit their opted-in text/announcement parent. DMs, bot and webhook messages, slash-command prompts, provider replies, and summaries are excluded. Edits replace retained text but keep the original expiry deadline. Each channel has its own retention period; shortening it takes effect in the next expiry sweep, while increasing it applies only to messages captured afterward. The command also runs a sweep after changing settings. Expired rows are purged at startup and hourly. Single/bulk message deletion, channel/thread deletion or access revocation, and guild removal clear their corresponding rows where Discord sends the event.
+
+```text
+/messages config storage-disable channel:#bots
+/messages purge channel:#bots confirm:true
+/messages purge confirm:true
+```
+
+`storage-disable` immediately deletes retained rows for that channel and its threads; omitting the channel disables storage for the full server and deletes all of its rows. `/messages purge` requires `confirm:true`, Manage Server, and a private confirmation result that reports counts only. Repeating a purge is safe and returns zero after the rows are gone. The content is stored in the local SQLite database as plain text until deletion or expiry; protect the database and its backups accordingly. Retained content is not currently read by `/ask` or `/summarize` and is not submitted to an AI provider by this milestone.
+
+The automated suite exercises the schema migration, disabled-by-default state, allowlist and intent gates, edits, deletion events, expiry after downtime, shorter retention, guild-scoped purge, and log redaction. Live test-server verification should use a disposable channel and non-sensitive test text; test-server event reconciliation remains pending until that storage opt-in is deliberately exercised. Disabling the Message Content Intent stops new captures; the bot continues scheduled expiry while that capability is unavailable. Re-enable the intent only when needed, and review the channel allowlist with `/messages status`.
