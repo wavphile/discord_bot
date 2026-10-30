@@ -1,6 +1,6 @@
 # Discord server assistant
 
-A self-hosted Discord bot for server configuration inspection, permission explanations, reviewed batch changes, and bounded AI assistance. See [the implementation plan](docs/project-plan.md) for scope, milestones, safety requirements, and release gates, and the [supported settings matrix](docs/supported-settings.md) for the initial API boundary.
+A self-hosted Discord bot for server configuration inspection, permission explanations, reviewed batch changes, and bounded AI assistance. See [the implementation plan](docs/project-plan.md) for scope, milestones, safety requirements, and release gates, the [supported settings matrix](docs/supported-settings.md) for the API boundary, and [release readiness](docs/release-readiness.md) for known follow-up work. The first stable release has not been published; actual Linux VM and Raspberry Pi checks remain required.
 
 ## Development setup
 

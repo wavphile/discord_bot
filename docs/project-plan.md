@@ -167,7 +167,7 @@ M4-24 adds opt-in SQLite retention through separate `/messages config storage-en
 | 27 | [x] [Verify upgrade and downgrade procedure](https://github.com/wavphile/discord_bot/issues/51) | Test migration from previous release; document that older images may require restoring a matching database backup |
 | 28 | [x] [Document feature extension](https://github.com/wavphile/discord_bot/issues/53) | Add an example read-only feature using the module interface; module author does not modify executor or provider internals |
 | 29 | [x] [Validate second AI provider](https://github.com/wavphile/discord_bot/issues/55) | Same question/plan contract works through a second adapter; failures and usage limits behave consistently |
-| 30 | Publish first stable release | Release notes, supported-settings matrix, setup guide, operating limits, privacy/retention explanation, and known issues are complete |
+| 30 | Publish first stable release | Release notes, supported-settings matrix, setup guide, operating limits, privacy/retention explanation, and known issues are complete; required hardware and release gates pass |
 
 Exit gate: all MVP scenarios pass on both hosting targets; restore succeeds; no unresolved high-impact authorization or batch-execution defects.
 
@@ -179,7 +179,9 @@ M5-27 was completed in [PR #52](https://github.com/wavphile/discord_bot/pull/52)
 
 M5-28 was completed in [PR #54](https://github.com/wavphile/discord_bot/pull/54): the read-only command-module interface, `/server-info` example, tests, and contributor guide are merged. The live `/server-info` interaction remains an optional test-server follow-up.
 
-M5-29 is tracked in [issue #55](https://github.com/wavphile/discord_bot/issues/55). The Anthropic Messages adapter, token accounting, provider selection, and error mapping are implemented and automatically tested. The default remains `mock`; the live Anthropic API call remains a documented follow-up because no key is needed for the PR tryout.
+M5-29 was completed in [PR #56](https://github.com/wavphile/discord_bot/pull/56). The Anthropic Messages adapter, token accounting, provider selection, and error mapping are implemented and automatically tested. CI passed formatting, typecheck, build, and native amd64/arm64 container smoke checks. The PR tryout registered eight commands, started with SQLite schema v8, and logged `discord.ready` in Keta’s Crackhouse. No slash command or live Anthropic API request was sent. The default remains `mock`; a live hosted-provider call remains a documented follow-up.
+
+M5-30 release documentation is being prepared. The stable release remains unpublished until the mandatory VM and physical 64-bit Raspberry Pi results under M5-25 are recorded and the remaining release checks pass. See [release readiness](release-readiness.md).
 
 ## 5. Important execution contracts
 
@@ -211,15 +213,9 @@ Indicative effort for one experienced developer: M0–M3 in 4–6 developer-week
 
 Defer dashboard, autonomous moderation, bulk bans/deletions, cross-server rollout, large historical message ingestion, vector databases, Kubernetes, and on-Pi model inference. Add these through separately scoped issues after the core is proven.
 
-## 8. First implementation session
+## 8. Initial project setup (historical)
 
-1. Confirm the existing repository owner/name, whether its current public visibility is acceptable, license, initial AI provider, and target Pi hardware.
-2. Use `wavphile/discord_bot` as the canonical project repository and clone it into a dedicated project directory.
-3. Commit this plan as the initial versioned project artifact; add repository foundation files in follow-up commits and open a draft PR for the first implementation work.
-4. Create milestones M0–M5 and issues 01–30 from the tables above.
-5. Implement issues 02–06 in dependency order and release `v0.1.0` after the M0 exit gate passes.
-
-This document is a plan. The GitHub repository exists and is currently public; this plan commit starts its version history. No issues, releases, Discord application, or infrastructure have been created as part of preparing it.
+The repository `wavphile/discord_bot` is the canonical project and is public. This plan began its tracked scope; subsequent implementation, test-server work, issues, and PRs are recorded above and in [release readiness](release-readiness.md). The repository has no tracked `LICENSE` file; the owner must choose and record licensing terms before inviting external contributions. Current setup and operator instructions are in the [README](../README.md) and the linked deployment and operations guides.
 
 ## 9. Reference constraints
 
