@@ -151,6 +151,12 @@ export const messagesCommand = new SlashCommandBuilder()
     subcommand
       .setName("purge")
       .setDescription("Delete retained messages without disabling storage.")
+      .addBooleanOption((option) =>
+        option
+          .setName("confirm")
+          .setDescription("Confirm permanent deletion of retained messages.")
+          .setRequired(true),
+      )
       .addChannelOption((option) =>
         option
           .setName("channel")
@@ -159,12 +165,6 @@ export const messagesCommand = new SlashCommandBuilder()
             ChannelType.GuildText,
             ChannelType.GuildAnnouncement,
           ),
-      )
-      .addBooleanOption((option) =>
-        option
-          .setName("confirm")
-          .setDescription("Confirm permanent deletion of retained messages.")
-          .setRequired(true),
       ),
   );
 
