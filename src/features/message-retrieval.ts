@@ -1,7 +1,7 @@
 import type { AiPrompt } from "../ai/types.js";
 import { MAX_QUESTION_LENGTH } from "./configuration-questions.js";
 
-export type MessageProviderId = "mock" | "openai";
+export type MessageProviderId = "mock" | "openai" | "anthropic";
 
 export type MessageRetrievalSettings = Readonly<{
   enabled: boolean;
@@ -92,7 +92,9 @@ export function isMessageRetrievalSettings(
     Number.isInteger(settings["maxMessages"]) &&
     settings["maxMessages"] >= 1 &&
     settings["maxMessages"] <= maximumMessages &&
-    (settings["provider"] === "mock" || settings["provider"] === "openai")
+    (settings["provider"] === "mock" ||
+      settings["provider"] === "openai" ||
+      settings["provider"] === "anthropic")
   );
 }
 

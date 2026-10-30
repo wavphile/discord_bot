@@ -30,143 +30,174 @@ import {
 
 const maximumChannelCount = 25;
 
-export const messagesCommand = new SlashCommandBuilder()
-  .setName("messages")
-  .setDescription("Configure opt-in, bounded message analysis.")
-  .addSubcommand((subcommand) =>
-    subcommand
-      .setName("status")
-      .setDescription("Show the current message analysis settings."),
-  )
-  .addSubcommandGroup((group) =>
-    group
-      .setName("config")
-      .setDescription("Change server message analysis settings.")
-      .addSubcommand((subcommand) =>
-        subcommand
-          .setName("enable")
-          .setDescription("Allow retrieval from one text channel.")
-          .addChannelOption((option) =>
-            option
-              .setName("channel")
-              .setDescription("Text channel whose recent messages may be read.")
-              .addChannelTypes(
-                ChannelType.GuildText,
-                ChannelType.GuildAnnouncement,
-              )
-              .setRequired(true),
-          ),
-      )
-      .addSubcommand((subcommand) =>
-        subcommand
-          .setName("disable")
-          .setDescription("Remove one channel or disable message retrieval.")
-          .addChannelOption((option) =>
-            option
-              .setName("channel")
-              .setDescription("Channel to remove; omit to disable the feature.")
-              .addChannelTypes(
-                ChannelType.GuildText,
-                ChannelType.GuildAnnouncement,
-              ),
-          ),
-      )
-      .addSubcommand((subcommand) =>
-        subcommand
-          .setName("limits")
-          .setDescription("Set the maximum lookback age and message count.")
-          .addIntegerOption((option) =>
-            option
-              .setName("max_age_days")
-              .setDescription(
-                "Maximum message age eligible for retrieval (1–7).",
-              )
-              .setMinValue(1)
-              .setMaxValue(7),
-          )
-          .addIntegerOption((option) =>
-            option
-              .setName("max_messages")
-              .setDescription("Maximum messages included in one answer (1–50).")
-              .setMinValue(1)
-              .setMaxValue(50),
-          ),
-      )
-      .addSubcommand((subcommand) =>
-        subcommand
-          .setName("provider")
-          .setDescription("Select the provider used for message questions.")
-          .addStringOption((option) =>
-            option
-              .setName("provider")
-              .setDescription("Provider configured locally for this bot.")
-              .addChoices(
-                { name: "Mock test output", value: "mock" },
-                { name: "OpenAI", value: "openai" },
-              )
-              .setRequired(true),
-          ),
-      )
-      .addSubcommand((subcommand) =>
-        subcommand
-          .setName("storage-enable")
-          .setDescription("Opt a text channel and its threads into retention.")
-          .addChannelOption((option) =>
-            option
-              .setName("channel")
-              .setDescription("Text channel whose new messages may be stored.")
-              .addChannelTypes(
-                ChannelType.GuildText,
-                ChannelType.GuildAnnouncement,
-              )
-              .setRequired(true),
-          )
-          .addIntegerOption((option) =>
-            option
-              .setName("retention_days")
-              .setDescription("Maximum message retention period (1–7 days).")
-              .setMinValue(1)
-              .setMaxValue(7)
-              .setRequired(true),
-          ),
-      )
-      .addSubcommand((subcommand) =>
-        subcommand
-          .setName("storage-disable")
-          .setDescription("Stop retention and delete stored messages.")
-          .addChannelOption((option) =>
-            option
-              .setName("channel")
-              .setDescription(
-                "Channel to disable; omit to disable this server.",
-              )
-              .addChannelTypes(
-                ChannelType.GuildText,
-                ChannelType.GuildAnnouncement,
-              ),
-          ),
-      ),
-  )
-  .addSubcommand((subcommand) =>
-    subcommand
-      .setName("purge")
-      .setDescription("Delete retained messages without disabling storage.")
-      .addBooleanOption((option) =>
-        option
-          .setName("confirm")
-          .setDescription("Confirm permanent deletion of retained messages.")
-          .setRequired(true),
-      )
-      .addChannelOption((option) =>
-        option
-          .setName("channel")
-          .setDescription("Channel to purge; omit to purge this server.")
-          .addChannelTypes(
-            ChannelType.GuildText,
-            ChannelType.GuildAnnouncement,
-          ),
-      ),
-  );
+const providerNames: Record<MessageProviderId, string> = {
+  mock: "Mock test output",
+  openai: "OpenAI",
+  anthropic: "Anthropic Claude",
+};
+
+export function createMessagesCommand(
+  configuredProviders: readonly MessageProviderId[] = [
+    "mock",
+    "openai",
+    "anthropic",
+  ],
+) {
+  const providers = [
+    ...new Set<MessageProviderId>(["mock", ...configuredProviders]),
+  ];
+  return new SlashCommandBuilder()
+    .setName("messages")
+    .setDescription("Configure opt-in, bounded message analysis.")
+    .addSubcommand((subcommand) =>
+      subcommand
+        .setName("status")
+        .setDescription("Show the current message analysis settings."),
+    )
+    .addSubcommandGroup((group) =>
+      group
+        .setName("config")
+        .setDescription("Change server message analysis settings.")
+        .addSubcommand((subcommand) =>
+          subcommand
+            .setName("enable")
+            .setDescription("Allow retrieval from one text channel.")
+            .addChannelOption((option) =>
+              option
+                .setName("channel")
+                .setDescription(
+                  "Text channel whose recent messages may be read.",
+                )
+                .addChannelTypes(
+                  ChannelType.GuildText,
+                  ChannelType.GuildAnnouncement,
+                )
+                .setRequired(true),
+            ),
+        )
+        .addSubcommand((subcommand) =>
+          subcommand
+            .setName("disable")
+            .setDescription("Remove one channel or disable message retrieval.")
+            .addChannelOption((option) =>
+              option
+                .setName("channel")
+                .setDescription(
+                  "Channel to remove; omit to disable the feature.",
+                )
+                .addChannelTypes(
+                  ChannelType.GuildText,
+                  ChannelType.GuildAnnouncement,
+                ),
+            ),
+        )
+        .addSubcommand((subcommand) =>
+          subcommand
+            .setName("limits")
+            .setDescription("Set the maximum lookback age and message count.")
+            .addIntegerOption((option) =>
+              option
+                .setName("max_age_days")
+                .setDescription(
+                  "Maximum message age eligible for retrieval (1–7).",
+                )
+                .setMinValue(1)
+                .setMaxValue(7),
+            )
+            .addIntegerOption((option) =>
+              option
+                .setName("max_messages")
+                .setDescription(
+                  "Maximum messages included in one answer (1–50).",
+                )
+                .setMinValue(1)
+                .setMaxValue(50),
+            ),
+        )
+        .addSubcommand((subcommand) =>
+          subcommand
+            .setName("provider")
+            .setDescription("Select the provider used for message questions.")
+            .addStringOption((option) =>
+              option
+                .setName("provider")
+                .setDescription("Provider configured locally for this bot.")
+                .addChoices(
+                  ...providers.map((provider) => ({
+                    name: providerNames[provider],
+                    value: provider,
+                  })),
+                )
+                .setRequired(true),
+            ),
+        )
+        .addSubcommand((subcommand) =>
+          subcommand
+            .setName("storage-enable")
+            .setDescription(
+              "Opt a text channel and its threads into retention.",
+            )
+            .addChannelOption((option) =>
+              option
+                .setName("channel")
+                .setDescription(
+                  "Text channel whose new messages may be stored.",
+                )
+                .addChannelTypes(
+                  ChannelType.GuildText,
+                  ChannelType.GuildAnnouncement,
+                )
+                .setRequired(true),
+            )
+            .addIntegerOption((option) =>
+              option
+                .setName("retention_days")
+                .setDescription("Maximum message retention period (1–7 days).")
+                .setMinValue(1)
+                .setMaxValue(7)
+                .setRequired(true),
+            ),
+        )
+        .addSubcommand((subcommand) =>
+          subcommand
+            .setName("storage-disable")
+            .setDescription("Stop retention and delete stored messages.")
+            .addChannelOption((option) =>
+              option
+                .setName("channel")
+                .setDescription(
+                  "Channel to disable; omit to disable this server.",
+                )
+                .addChannelTypes(
+                  ChannelType.GuildText,
+                  ChannelType.GuildAnnouncement,
+                ),
+            ),
+        ),
+    )
+    .addSubcommand((subcommand) =>
+      subcommand
+        .setName("purge")
+        .setDescription("Delete retained messages without disabling storage.")
+        .addBooleanOption((option) =>
+          option
+            .setName("confirm")
+            .setDescription("Confirm permanent deletion of retained messages.")
+            .setRequired(true),
+        )
+        .addChannelOption((option) =>
+          option
+            .setName("channel")
+            .setDescription("Channel to purge; omit to purge this server.")
+            .addChannelTypes(
+              ChannelType.GuildText,
+              ChannelType.GuildAnnouncement,
+            ),
+        ),
+    );
+}
+
+export const messagesCommand = createMessagesCommand();
 
 export async function executeMessagesCommand(
   interaction: ChatInputCommandInteraction,
@@ -328,14 +359,16 @@ export async function executeMessagesCommand(
         content:
           provider === "openai"
             ? "The OpenAI provider is not configured locally. Configure OPENAI_API_KEY and restart the bot before selecting it."
-            : "That provider is not available.",
+            : provider === "anthropic"
+              ? "The Anthropic provider is not configured locally. Configure ANTHROPIC_API_KEY and restart the bot before selecting it."
+              : "That provider is not available.",
         flags: MessageFlags.Ephemeral,
       });
       return;
     }
     saveSettings(database, guildId, { ...current, provider });
     await interaction.reply({
-      content: `Message questions will use the ${provider} provider. ${provider === "openai" ? "Review the documented provider data handling before enabling message analysis." : "Mock responses are test output, not factual answers."}`,
+      content: `Message questions will use the ${provider} provider. ${provider === "mock" ? "Mock responses are test output, not factual answers." : "Review the documented provider data handling before enabling message analysis."}`,
       flags: MessageFlags.Ephemeral,
     });
     return;

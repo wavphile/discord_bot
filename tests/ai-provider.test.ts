@@ -175,6 +175,8 @@ test("provider factory defaults to the mock and requires OpenAI credentials", ()
     AI_PROVIDER: "mock" as const,
     OPENAI_BASE_URL: "https://api.openai.com/v1",
     OPENAI_MODEL: "test-model",
+    ANTHROPIC_BASE_URL: "https://api.anthropic.com/v1",
+    ANTHROPIC_MODEL: "test-anthropic-model",
     AI_REQUEST_TIMEOUT_MS: 5_000,
   };
   assert.ok(createAiProvider(settings) instanceof MockAiProvider);
@@ -190,6 +192,8 @@ test("message provider registry exposes only providers configured locally", () =
     AI_PROVIDER: "mock" as const,
     OPENAI_BASE_URL: "https://api.openai.com/v1",
     OPENAI_MODEL: "test-model",
+    ANTHROPIC_BASE_URL: "https://api.anthropic.com/v1",
+    ANTHROPIC_MODEL: "test-anthropic-model",
     AI_REQUEST_TIMEOUT_MS: 5_000,
   };
   const mockOnly = createAiProviders(settings);

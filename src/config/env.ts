@@ -28,13 +28,22 @@ const envSchema = z
     DISCORD_ENABLE_GUILD_MEMBERS_INTENT: booleanEnv,
     DISCORD_ENABLE_MESSAGE_CONTENT_INTENT: booleanEnv,
     DATABASE_PATH: z.string().min(1).default("./data/discord-bot.sqlite"),
-    AI_PROVIDER: z.enum(["mock", "openai"]).default("mock"),
+    AI_PROVIDER: z.enum(["mock", "openai", "anthropic"]).default("mock"),
     OPENAI_API_KEY: z
       .string()
       .optional()
       .transform((value) => value?.trim() || undefined),
     OPENAI_BASE_URL: z.string().url().default("https://api.openai.com/v1"),
     OPENAI_MODEL: z.string().trim().min(1).default("gpt-6-astra"),
+    ANTHROPIC_API_KEY: z
+      .string()
+      .optional()
+      .transform((value) => value?.trim() || undefined),
+    ANTHROPIC_BASE_URL: z
+      .string()
+      .url()
+      .default("https://api.anthropic.com/v1"),
+    ANTHROPIC_MODEL: z.string().trim().min(1).default("claude-sonnet-5-5"),
     AI_REQUEST_TIMEOUT_MS: z.coerce
       .number()
       .int()
@@ -71,6 +80,13 @@ const envSchema = z
         message: "is required when AI_PROVIDER is openai",
       });
     }
+    if (value.AI_PROVIDER === "anthropic" && !value.ANTHROPIC_API_KEY) {
+      context.addIssue({
+        code: "custom",
+        path: ["ANTHROPIC_API_KEY"],
+        message: "is required when AI_PROVIDER is anthropic",
+      });
+    }
 
     const endpoint = new URL(value.OPENAI_BASE_URL);
     const localDevelopmentEndpoint =
@@ -87,6 +103,29 @@ const envSchema = z
       context.addIssue({
         code: "custom",
         path: ["OPENAI_BASE_URL"],
+        message:
+          "must be an HTTPS endpoint (HTTP is allowed for localhost outside production) without URL credentials, query, or fragment",
+      });
+    }
+
+    const anthropicEndpoint = new URL(value.ANTHROPIC_BASE_URL);
+    const localAnthropicDevelopmentEndpoint =
+      value.NODE_ENV !== "production" &&
+      ["localhost", "127.0.0.1", "[::1]"].includes(anthropicEndpoint.hostname);
+    if (
+      (anthropicEndpoint.protocol !== "https:" &&
+        !(
+          anthropicEndpoint.protocol === "http:" &&
+          localAnthropicDevelopmentEndpoint
+        )) ||
+      anthropicEndpoint.username !== "" ||
+      anthropicEndpoint.password !== "" ||
+      anthropicEndpoint.search !== "" ||
+      anthropicEndpoint.hash !== ""
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["ANTHROPIC_BASE_URL"],
         message:
           "must be an HTTPS endpoint (HTTP is allowed for localhost outside production) without URL credentials, query, or fragment",
       });
