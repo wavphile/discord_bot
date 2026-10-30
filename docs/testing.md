@@ -32,7 +32,11 @@ npm run deploy:commands
 npm run dev
 ```
 
-Keep the bot running, open the test server, and follow the pull request's **Try it** steps. Run `/health`; it should privately report that the bot is responding and SQLite schema v2 is ready. Run `/server inspect`; it should privately report a snapshot ID, capture time, role/category/channel/overwrite counts, and limited channel visibility. The command stores a configuration snapshot in SQLite. It does not change server settings and is not a complete server backup. Press Ctrl+C to stop the local bot.
+Keep the bot running, open the test server, and follow the pull request's **Try it** steps. Run `/health`; it should privately report that the bot is responding and SQLite schema v2 is ready. Run `/server inspect`; it should privately report a snapshot ID, capture time, role/category/channel/overwrite counts, and limited channel visibility. The command stores a configuration snapshot in SQLite. It does not change server settings and is not a complete server backup.
+
+Run `/permissions explain` with a test member and a text or announcement channel. Its private response should show **View Channel**, **Send Messages**, and **Send Messages in Threads** separately, with the role and channel-overwrite rules behind each result. It is read-only. The command checks the selected member's current roles and channel overwrites; thread membership is outside this check. See [permission calculation details](permissions.md). If only the server owner account is available, the owner-bypass case can be tried; role and overwrite combinations remain covered by unit tests until another test member is available.
+
+Press Ctrl+C to stop the local bot.
 
 ### Windows PowerShell helper
 
@@ -48,7 +52,7 @@ If PowerShell blocks local scripts, run it in a one-off PowerShell process:
 powershell -ExecutionPolicy Bypass -File .\scripts\try-pr.ps1 -PullRequestNumber 6
 ```
 
-The helper requires a clean checkout, Node.js 24.15 or newer in the 24.x line, and at least one valid allowed test user or role ID in `.env`. It creates `.env` from the example and stops if you need to fill it in. It fetches the PR's current head into a local `try/pr-<number>` branch, installs locked dependencies, shows the application and test server IDs plus allowlist counts without displaying the token or IDs, and asks you to type `DEPLOY` before registering guild-scoped commands. It then starts the bot in the foreground. Try `/health` and press Ctrl+C when finished. The helper will not overwrite a pre-existing local branch with the same name.
+The helper requires a clean checkout, Node.js 24.15 or newer in the 24.x line, and at least one valid allowed test user or role ID in `.env`. It creates `.env` from the example and stops if you need to fill it in. It fetches the PR's current head into a local `try/pr-<number>` branch, installs locked dependencies, shows the application and test server IDs plus allowlist counts without displaying the token or IDs, and asks you to type `DEPLOY` before registering guild-scoped commands. It then starts the bot in the foreground. Try the commands listed in the PR's **Try it** section and press Ctrl+C when finished. The helper will not overwrite a pre-existing local branch with the same name.
 
 ### Try authorization
 
@@ -125,4 +129,4 @@ The failure command intentionally stops the container once. Do not use `docker c
 
 Every pull request and push to `main` runs the same local checks with `npm run check`. The workflow uses the committed lockfile and Node.js version from `.nvmrc`; it has read-only repository access and no bot or AI secrets.
 
-The workflow covers formatting, TypeScript type checking, compilation, Compose configuration, and production image building. It also checks that the image contains no dotenv files. Feature-specific automated tests will be added with the behavior they exercise. A pull request should state what can be tried, how to trigger it, the expected result, and any required setup or permissions.
+The workflow covers formatting, TypeScript type checking, permission-calculation unit tests, compilation, Compose configuration, and production image building. It also checks that the image contains no dotenv files. A pull request should state what can be tried, how to trigger it, the expected result, and any required setup or permissions.

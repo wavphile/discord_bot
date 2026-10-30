@@ -8,6 +8,7 @@ import {
 import { env } from "./config/env.js";
 import { authorizeInteraction } from "./core/authorization.js";
 import { executeHealthCommand } from "./discord/commands/health.js";
+import { executePermissionsCommand } from "./discord/commands/permissions.js";
 import { executeServerCommand } from "./discord/commands/server.js";
 import { logger } from "./observability/logger.js";
 import { getSchemaVersion, openDatabase } from "./storage/database.js";
@@ -65,6 +66,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
       await executeHealthCommand(interaction, schemaVersion);
     } else if (interaction.commandName === "server") {
       await executeServerCommand(interaction, client, database);
+    } else if (interaction.commandName === "permissions") {
+      await executePermissionsCommand(interaction);
     }
   } catch (error) {
     logger.error("discord.interaction.failed", error, {
