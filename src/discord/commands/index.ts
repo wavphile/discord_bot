@@ -5,6 +5,7 @@ import { permissionsCommand } from "./permissions.js";
 import { serverCommand } from "./server.js";
 import { messagesCommand } from "./messages.js";
 import { summarizeCommand } from "./summarize.js";
+import { featureModuleCommands } from "../modules/index.js";
 
 export const commands = [
   healthCommand,
@@ -14,4 +15,5 @@ export const commands = [
   messagesCommand,
   summarizeCommand,
   planCommand,
+  ...featureModuleCommands,
 ];
