@@ -23,6 +23,8 @@ Build the production JavaScript with `npm run build`; run it with `npm start`.
 
 After creating `.env`, build and start the bot with `docker compose up --build -d`. To register or update the development slash command, run `npm run deploy:commands` in a Node.js environment with the same `.env` values. View service output with `docker compose logs -f bot` and stop it with `docker compose down`.
 
-The bot creates a versioned SQLite database at `DATABASE_PATH` (default `./data/discord-bot.sqlite`). Docker Compose stores it in the persistent `bot-data` volume. The current schema stores per-guild JSON settings and configuration snapshots; it does not store Discord message content or member lists. Do not add real tokens, AI keys, server exports, or database files to Git.
+The bot creates a versioned SQLite database at `DATABASE_PATH` (default `./data/discord-bot.sqlite`). Docker Compose stores it in the persistent `bot-data` volume. The database stores per-guild JSON settings and configuration snapshots. Human-authored message text is stored only when a server administrator explicitly enables retention for a channel, for the configured 1–7 day period; see the [retention guide](docs/testing.md#retained-message-storage-and-purge). Do not add real tokens, AI keys, server exports, or database files to Git.
 
 `docker compose down` keeps the `bot-data` volume. Use `docker compose down --volumes` only when you intend to delete the stored database.
+
+For an amd64 Linux VM or a 64-bit Raspberry Pi, use the same tagged source revision on both hosts and follow the [deployment verification guide](docs/deployment.md). CI builds and smoke-tests Linux images on native amd64 and arm64 runners; physical VM and Raspberry Pi measurements are still required before the M5 release gate can pass.
