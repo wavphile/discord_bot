@@ -87,6 +87,8 @@ Replace `#bots` with a comma-separated list of channel mentions or IDs. For the 
 
 Each response should be ephemeral and identify every channel and role by name and ID, show the before/after values, state the expiry, and explicitly say no Discord changes were applied. A target already at the requested value is omitted from the plan and listed as a no-op; if all targets are no-ops, no plan is saved. The selected channel list is resolved once, capped at 25, and cannot expand after saving. Invalid, inaccessible, cross-server, or unsupported targets reject the whole request before a plan is stored.
 
+As of October 30, 2026, a live test-server smoke test passed for `/plan slowmode channels:#bots seconds:5`: the private preview resolved `#bots`, showed slowmode `0` before and `5` after, saved a preview expiring in 30 minutes, and confirmed no Discord changes were applied. Live smoke tests for `/plan topic` and `/plan permission` are still pending; their automated checks pass, but they should be tried in Discord before a later release that depends on them. The permission test requires a custom unmanaged role.
+
 The permission preview preserves all existing overwrite bits while changing only the selected bit. The commands do not require permission to write to Discord because they perform no Discord writes. `npm test` covers selector parsing/resolution, visibility/type checks, no-op filtering, bit preservation, all-or-nothing planning, and private preview behavior.
 
 ### Try the storage migration and restart persistence
