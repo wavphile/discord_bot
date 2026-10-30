@@ -84,5 +84,5 @@ cleanup_health_container
 trap - EXIT HUP INT TERM
 
 printf 'PASS: Docker image architecture=linux/%s\n' "$actual_image_arch"
-printf 'PASS: Docker image SQLite backup and restore\n'
+printf 'PASS: Docker image SQLite upgrade and rollback rehearsal\n'
 printf 'PASS: Docker image readiness health check\n'

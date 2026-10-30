@@ -48,7 +48,7 @@ docker compose stop --timeout 20 bot
 docker compose run --rm --no-deps bot node dist/storage/operations.js restore /app/data/backups/<backup-file>.sqlite --confirm-stopped
 ```
 
-The restore command requires `--confirm-stopped`, checks integrity and schema compatibility, preflights room for both the current and restored database plus a safety reserve, and writes a separate pre-restore backup before replacing the live file. It preserves the old database if validation or installation fails. It removes old SQLite WAL sidecars only after checkpointing and preserving the old database. Keep the printed pre-restore path until the recovered service is verified.
+The restore command requires `--confirm-stopped`, validates that the source backup matches the running tool's schema, checks the stopped target's integrity and migration ledger, preflights room for both databases plus a safety reserve, and writes a separate pre-restore backup before replacing the live file. This lets an older release restore its matching backup over a newer database while preserving that newer database as a separately recoverable copy. The command preserves the old database if validation or installation fails. It removes old SQLite WAL sidecars only after checkpointing and preserving the old database. Keep the printed pre-restore path until the recovered service is verified. See [upgrades.md](upgrades.md) for the full version rollback procedure.
 
 Bring the service back and verify readiness and application logs:
 

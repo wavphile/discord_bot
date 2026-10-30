@@ -26,10 +26,23 @@ type SchemaObjectRow = Readonly<{
   sql: string | null;
 }>;
 type DatabaseDetails = Readonly<{ logicalBytes: number }>;
+type SchemaPolicy = "current" | "versioned";
 
 export async function createDatabaseBackup(
   databasePath: string,
   destinationPath?: string,
+): Promise<string> {
+  return createDatabaseBackupWithPolicy(
+    databasePath,
+    destinationPath,
+    "current",
+  );
+}
+
+async function createDatabaseBackupWithPolicy(
+  databasePath: string,
+  destinationPath: string | undefined,
+  schemaPolicy: SchemaPolicy,
 ): Promise<string> {
   const sourcePath = resolveDatabasePath(databasePath);
   const targetPath = resolve(
@@ -50,9 +63,13 @@ export async function createDatabaseBackup(
   );
   const temporaryPath = join(temporaryDirectory, "database.sqlite");
   try {
-    const details = await copyValidatedDatabase(sourcePath, temporaryPath);
+    const details = await copyValidatedDatabase(
+      sourcePath,
+      temporaryPath,
+      schemaPolicy,
+    );
     assertDiskSpace(dirname(targetPath), details.logicalBytes);
-    validateDatabaseFile(temporaryPath);
+    validateDatabaseFileWithPolicy(temporaryPath, schemaPolicy);
     setPrivateFileMode(temporaryPath);
 
     // A same-directory hard link publishes the finished file atomically and
@@ -85,7 +102,9 @@ export async function restoreDatabaseBackup(
   const sourceDetails = validateDatabaseFile(sourcePath);
   const targetExists = existsSync(targetPath);
   let targetDetails: DatabaseDetails | undefined;
-  if (targetExists) targetDetails = validateDatabaseFile(targetPath);
+  if (targetExists) {
+    targetDetails = validateDatabaseFileWithPolicy(targetPath, "versioned");
+  }
 
   const requiredBytes =
     sourceDetails.logicalBytes + (targetDetails?.logicalBytes ?? 0);
@@ -97,7 +116,11 @@ export async function restoreDatabaseBackup(
 
   if (targetExists) {
     checkpointDatabase(targetPath);
-    await createDatabaseBackup(targetPath, previousBackupPath);
+    await createDatabaseBackupWithPolicy(
+      targetPath,
+      previousBackupPath,
+      "versioned",
+    );
   }
 
   const temporaryDirectory = mkdtempSync(
@@ -123,11 +146,19 @@ export async function restoreDatabaseBackup(
     if (targetExists) {
       rmSync(`${targetPath}-wal`, { force: true });
       rmSync(`${targetPath}-shm`, { force: true });
-      linkSync(targetPath, rollbackPath);
-      rollbackLinked = true;
-      if (process.platform === "win32") {
-        renameSync(targetPath, displacedPath);
-        originalMoved = true;
+      try {
+        linkSync(targetPath, rollbackPath);
+        rollbackLinked = true;
+        if (process.platform === "win32") {
+          renameSync(targetPath, displacedPath);
+          originalMoved = true;
+        }
+      } catch (error) {
+        if (rollbackLinked && existsSync(targetPath)) {
+          unlinkSync(rollbackPath);
+          rollbackLinked = false;
+        }
+        throw error;
       }
     }
 
@@ -170,10 +201,17 @@ export function assertSufficientFreeSpace(
 }
 
 export function validateDatabaseFile(databasePath: string): DatabaseDetails {
+  return validateDatabaseFileWithPolicy(databasePath, "current");
+}
+
+function validateDatabaseFileWithPolicy(
+  databasePath: string,
+  schemaPolicy: SchemaPolicy,
+): DatabaseDetails {
   const path = resolveDatabasePath(databasePath);
   const database = new DatabaseSync(path, { readOnly: true, timeout: 5_000 });
   try {
-    return validateOpenDatabase(database);
+    return validateOpenDatabase(database, schemaPolicy);
   } finally {
     database.close();
   }
@@ -208,13 +246,14 @@ function samePath(left: string, right: string): boolean {
 async function copyValidatedDatabase(
   sourcePath: string,
   destinationPath: string,
+  schemaPolicy: SchemaPolicy = "current",
 ): Promise<DatabaseDetails> {
   const source = new DatabaseSync(sourcePath, {
     readOnly: true,
     timeout: 5_000,
   });
   try {
-    const details = validateOpenDatabase(source);
+    const details = validateOpenDatabase(source, schemaPolicy);
     assertDiskSpace(dirname(destinationPath), details.logicalBytes);
     await backup(source, destinationPath);
     return details;
@@ -223,7 +262,10 @@ async function copyValidatedDatabase(
   }
 }
 
-function validateOpenDatabase(database: DatabaseSync): DatabaseDetails {
+function validateOpenDatabase(
+  database: DatabaseSync,
+  schemaPolicy: SchemaPolicy = "current",
+): DatabaseDetails {
   const integrity = database.prepare("PRAGMA integrity_check").all() as Array<{
     integrity_check: string;
   }>;
@@ -234,20 +276,28 @@ function validateOpenDatabase(database: DatabaseSync): DatabaseDetails {
   const applied = database
     .prepare("SELECT version, name FROM schema_migrations ORDER BY version")
     .all() as MigrationRow[];
-  if (
-    applied.length !== migrations.length ||
+  if (schemaPolicy === "current") {
+    if (
+      applied.length !== migrations.length ||
+      applied.some(
+        (row, index) =>
+          row.version !== migrations[index]?.version ||
+          row.name !== migrations[index]?.name,
+      )
+    ) {
+      throw new Error(
+        "Database schema is incomplete or does not match this application version.",
+      );
+    }
+    assertExpectedSchema(database);
+  } else if (
+    applied.length === 0 ||
     applied.some(
-      (row, index) =>
-        row.version !== migrations[index]?.version ||
-        row.name !== migrations[index]?.name,
+      (row, index) => row.version !== index + 1 || row.name.trim() === "",
     )
   ) {
-    throw new Error(
-      "Database schema is incomplete or does not match this application version.",
-    );
+    throw new Error("Database migration history is incomplete or invalid.");
   }
-
-  assertExpectedSchema(database);
 
   const pageCount = database.prepare("PRAGMA page_count").get() as {
     page_count: number;

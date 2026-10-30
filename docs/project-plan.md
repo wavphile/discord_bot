@@ -173,7 +173,9 @@ Exit gate: all MVP scenarios pass on both hosting targets; restore succeeds; no 
 
 M5-25 is tracked in [issue #47](https://github.com/wavphile/discord_bot/issues/47). CI builds and smoke-tests the production image on native amd64 and arm64 GitHub-hosted runners. Running the same release on a real Linux VM and 64-bit Raspberry Pi, and recording device, server-size, and resource measurements, remain required before the release gate; see [deployment.md](deployment.md).
 
-M5-26 is tracked in [issue #49](https://github.com/wavphile/discord_bot/issues/49). The health endpoint and recovery commands are documented in [operations.md](operations.md). Container health and automated restore rehearsal must pass before this task is complete; physical VM/Pi restore tests remain deployment follow-up work under M5-25.
+M5-26 was completed in [PR #50](https://github.com/wavphile/discord_bot/pull/50). GitHub Actions passed the application checks and native amd64/arm64 container smoke tests for health and backup/restore; the PowerShell tryout connected to Keta’s Crackhouse. The health endpoint and recovery commands are documented in [operations.md](operations.md). Physical VM/Pi operating and restore measurements remain deployment follow-up work under M5-25.
+
+M5-27 is tracked in [issue #51](https://github.com/wavphile/discord_bot/issues/51). Upgrade and schema-matched rollback steps are documented in [upgrades.md](upgrades.md); the automated v7-to-v8 upgrade and newer-schema rollback rehearsals cover the data-preservation contract.
 
 ## 5. Important execution contracts
 
