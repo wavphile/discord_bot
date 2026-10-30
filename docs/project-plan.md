@@ -82,12 +82,16 @@ Exit gate: clean checkout can be configured and run using the README; CI passes;
 | --- | --- | --- |
 | 07 | [Define supported settings matrix](supported-settings.md) | Every field has API source, read/write support, required permissions, feature restrictions, and reversal support |
 | 08 | [x] Implement configuration snapshots | `/server inspect` reads supported guild fields, roles, categories, channels, and overrides; snapshot has timestamp and schema version |
-| 09 | [Implement permission calculations](https://github.com/wavphile/discord_bot/issues/15) | `/permissions explain` shows why a member can view/send in a channel, including owner/admin cases, role aggregation, overwrites, and implicit restrictions |
+| 09 | [x] [Implement permission calculations](https://github.com/wavphile/discord_bot/issues/15) | `/permissions explain` shows why a member can view/send in a channel, including owner/admin cases, role aggregation, overwrites, and implicit restrictions |
 | 10 | Add snapshot comparison | `/server diff` identifies additions, removals, and changed supported fields between snapshots; inaccessible data is clearly marked |
 
 M1-08 server acceptance passed on October 30, 2026: `/server inspect` returned a private summary and limited-visibility notice in `#bots`, and the SQLite database retained the captured snapshot after the command completed.
 
-Exit gate: compare computed permissions against Discord behavior for representative role and overwrite combinations, using a second test account.
+M1-09 acceptance passed on October 30, 2026: nine permission-calculation unit tests passed, and the `/permissions explain` command ran through `scripts/try-pr.ps1 -PullRequestNumber 16` in `#bots`. The server-owner case reported `View Channel`, `Send Messages`, and `Send Messages in Threads` as allowed, with the owner-bypass explanation; its results matched discord.js. Testing required a member-specific `View Channel` allow for the bot in `#bots` only.
+
+M1-09 remaining Discord-side check: the non-owner role and overwrite comparison could not be run because a second test account is unavailable. Unit tests cover the owner, Administrator, role aggregation, overwrite precedence, and implicit restriction cases. Re-run the client comparison when another test account is available.
+
+M1 exit gate: M1-09's owner case and unit checks passed. The representative non-owner role and overwrite comparison remains pending as recorded above; the remaining M1 work can proceed while that test account is unavailable.
 
 ### Milestone M2 — reliable batch administration (`v0.3.0`)
 
