@@ -18,6 +18,7 @@ import {
   DurablePlanJobRunner,
 } from "./discord/plan-job-runner.js";
 import { logger } from "./observability/logger.js";
+import { createReadinessServer } from "./health/readiness.js";
 import { getSchemaVersion, openDatabase } from "./storage/database.js";
 import {
   createGatewayIntents,
@@ -58,6 +59,13 @@ const stopMessageRetentionEvents = registerMessageRetentionEvents(
   gatewayCapabilities,
 );
 let shuttingDown = false;
+const readinessServer = createReadinessServer({
+  discordReady: () => !shuttingDown && client.isReady(),
+  databaseReady: () => {
+    database.prepare("SELECT 1").get();
+    return !shuttingDown;
+  },
+});
 
 logger.info("storage.ready", { schemaVersion });
 if (
@@ -223,13 +231,21 @@ async function shutdown(signal: "SIGINT" | "SIGTERM"): Promise<void> {
   await planJobRunner.stop();
   stopMessageRetentionEvents();
   client.destroy();
-  database.close();
+  try {
+    await readinessServer.close();
+  } catch (error) {
+    logger.error("health.server.close.failed", error);
+  } finally {
+    database.close();
+  }
+  logger.info("process.shutdown.complete", { signal });
 }
 
 process.once("SIGINT", () => void shutdown("SIGINT"));
 process.once("SIGTERM", () => void shutdown("SIGTERM"));
 
 try {
+  await readinessServer.listen();
   await client.login(env.DISCORD_BOT_TOKEN);
 } catch (error) {
   logger.error("discord.login.failed", error);
@@ -238,6 +254,12 @@ try {
       gatewayIntentSetupHint: true,
     });
   }
-  database.close();
+  try {
+    await readinessServer.close();
+  } catch (closeError) {
+    logger.error("health.server.close.failed", closeError);
+  } finally {
+    database.close();
+  }
   process.exitCode = 1;
 }

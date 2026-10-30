@@ -163,7 +163,7 @@ M4-24 adds opt-in SQLite retention through separate `/messages config storage-en
 | ID | Task | Acceptance criteria |
 | --- | --- | --- |
 | 25 | [Verify amd64 and arm64 deployments](https://github.com/wavphile/discord_bot/issues/47) | Same release runs on a Linux VM and an actual 64-bit Raspberry Pi; record model, RAM, server size, and measured resource usage |
-| 26 | Implement operational recovery | Health checks, graceful stop, database-safe backup, restore rehearsal, disk-space handling, and token rotation guide |
+| 26 | [Implement operational recovery](https://github.com/wavphile/discord_bot/issues/49) | Health checks, graceful stop, database-safe backup, restore rehearsal, disk-space handling, and token rotation guide |
 | 27 | Verify upgrade and downgrade procedure | Test migration from previous release; document that older images may require restoring a matching database backup |
 | 28 | Document feature extension | Add an example read-only feature using the module interface; module author does not modify executor or provider internals |
 | 29 | Validate second AI provider | Same question/plan contract works through a second adapter; failures and usage limits behave consistently |
@@ -172,6 +172,8 @@ M4-24 adds opt-in SQLite retention through separate `/messages config storage-en
 Exit gate: all MVP scenarios pass on both hosting targets; restore succeeds; no unresolved high-impact authorization or batch-execution defects.
 
 M5-25 is tracked in [issue #47](https://github.com/wavphile/discord_bot/issues/47). CI builds and smoke-tests the production image on native amd64 and arm64 GitHub-hosted runners. Running the same release on a real Linux VM and 64-bit Raspberry Pi, and recording device, server-size, and resource measurements, remain required before the release gate; see [deployment.md](deployment.md).
+
+M5-26 is tracked in [issue #49](https://github.com/wavphile/discord_bot/issues/49). The health endpoint and recovery commands are documented in [operations.md](operations.md). Container health and automated restore rehearsal must pass before this task is complete; physical VM/Pi restore tests remain deployment follow-up work under M5-25.
 
 ## 5. Important execution contracts
 
