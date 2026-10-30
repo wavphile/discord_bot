@@ -32,6 +32,14 @@ export type MessageQuestionEvidence = Readonly<{
   retrievedAt: string;
   maxAgeDays: number;
   maxMessages: number;
+  sources: readonly MessageEvidenceSource[];
+}>;
+
+export type MessageEvidenceSource = Readonly<{
+  sourceId: number;
+  messageId: string;
+  authorName: string;
+  createdAt: string;
 }>;
 
 export type MessageQuestionEvidenceResult =
@@ -159,15 +167,23 @@ export function buildMessageQuestionEvidence(
   }
 
   let remainingCharacters = maximumContextCharacters;
+  const sourceIdByMessage = new Map(
+    bounded.map((message, index) => [message.messageId, index + 1]),
+  );
   const includedNewestFirst: Array<{
-    author: string;
-    createdAt: string;
-    content: string;
+    message: RetrievedMessage;
+    record: {
+      source_id: number;
+      author: string;
+      createdAt: string;
+      content: string;
+    };
   }> = [];
   for (const message of [...bounded].reverse()) {
     if (remainingCharacters <= 0) break;
     const content = message.content.slice(0, remainingCharacters);
     const record = {
+      source_id: sourceIdByMessage.get(message.messageId) ?? 0,
       author: message.authorName.slice(0, maximumAuthorNameCharacters),
       createdAt: new Date(message.createdAt).toISOString(),
       content,
@@ -183,15 +199,15 @@ export function buildMessageQuestionEvidence(
     }
     const finalLength = JSON.stringify(record).length;
     remainingCharacters -= finalLength;
-    includedNewestFirst.push(record);
+    includedNewestFirst.push({ message, record });
   }
   if (includedNewestFirst.length === 0) {
     return { ok: false, reason: "message_context_too_large" };
   }
 
   const included = includedNewestFirst.reverse();
-  const oldestMessageAt = included[0]?.createdAt;
-  const newestMessageAt = included.at(-1)?.createdAt;
+  const oldestMessageAt = included[0]?.record.createdAt;
+  const newestMessageAt = included.at(-1)?.record.createdAt;
   if (!oldestMessageAt || !newestMessageAt) {
     return { ok: false, reason: "message_context_too_large" };
   }
@@ -202,7 +218,7 @@ export function buildMessageQuestionEvidence(
     channelId: input.channelId,
     retrievedAt,
     maxAgeDays: input.maxAgeDays,
-    messages: included,
+    messages: included.map(({ record }) => record),
   };
   return {
     ok: true,
@@ -225,6 +241,12 @@ export function buildMessageQuestionEvidence(
       retrievedAt,
       maxAgeDays: input.maxAgeDays,
       maxMessages: input.maxMessages,
+      sources: included.map(({ message, record }) => ({
+        sourceId: record.source_id,
+        messageId: message.messageId,
+        authorName: record.author,
+        createdAt: record.createdAt,
+      })),
     },
   };
 }
