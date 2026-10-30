@@ -13,7 +13,7 @@
     "start": "node dist/bot.js",
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc --noEmit -p tsconfig.tests.json",
-    "test": "tsx --test tests/permission-explanations.test.ts tests/snapshot-diff.test.ts",
+    "test": "tsx --test tests/permission-explanations.test.ts tests/snapshot-diff.test.ts tests/change-plans.test.ts",
     "check": "npm run format:check && npm run typecheck && npm run test && npm run build",
     "format": "prettier --write .",
     "format:check": "prettier --check ."
