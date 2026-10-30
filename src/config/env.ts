@@ -1,5 +1,6 @@
 import "dotenv/config";
 import { z } from "zod";
+import { booleanEnv } from "./boolean-env.js";
 
 const snowflake = z
   .string()
@@ -24,6 +25,8 @@ const envSchema = z
     DISCORD_ALLOWED_ROLE_IDS: snowflakeList,
     DISCORD_APPROVER_USER_IDS: snowflakeList,
     DISCORD_APPROVER_ROLE_IDS: snowflakeList,
+    DISCORD_ENABLE_GUILD_MEMBERS_INTENT: booleanEnv,
+    DISCORD_ENABLE_MESSAGE_CONTENT_INTENT: booleanEnv,
     DATABASE_PATH: z.string().min(1).default("./data/discord-bot.sqlite"),
     AI_PROVIDER: z.enum(["mock", "openai"]).default("mock"),
     OPENAI_API_KEY: z

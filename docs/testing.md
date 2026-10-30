@@ -12,7 +12,12 @@ Use a separate Discord application and a private test server for development. Ke
 6. Set `DISCORD_ALLOWED_USER_IDS` to your user ID and optionally `DISCORD_ALLOWED_ROLE_IDS` to comma-separated test role IDs. At least one allowlisted user or role is required for ordinary commands; an empty allowlist denies them. Keep the allowlist narrow and do not add `@everyone`.
 7. Set `DISCORD_APPROVER_USER_IDS` and/or `DISCORD_APPROVER_ROLE_IDS` to a separate approver user or role list. Only these users or roles can review, approve, or reject plans; approvers can use those approval subcommands without being on the ordinary command allowlist. The requester cannot approve their own plan. Leave both values empty to disable plan decisions.
 
-Administrative interactions are accepted only in `DISCORD_DEV_GUILD_ID`. The bot checks the requester against the configured user and role IDs before dispatching any interaction. DMs and other servers are denied. Do not enable privileged intents until a feature needs them. Review the permissions and data access for each new feature before trying it.
+Administrative interactions are accepted only in `DISCORD_DEV_GUILD_ID`. The bot checks the requester against the configured user and role IDs before dispatching any interaction. DMs and other servers are denied. Both privileged intents remain off by default. Only when a feature requires one, set its matching flag in `.env` and enable that intent under **Discord Developer Portal → your application → Bot → Privileged Gateway Intents**:
+
+- `DISCORD_ENABLE_GUILD_MEMBERS_INTENT=true` requests **Server Members Intent**.
+- `DISCORD_ENABLE_MESSAGE_CONTENT_INTENT=true` requests **Message Content Intent**.
+
+Restart the bot after changing either setting. `/health` reports which optional intents the local configuration requests. Discord describes [what each privileged intent provides](https://support-dev.discord.com/hc/en-us/articles/6207308062871-What-are-Privileged-Intents); enable only the capability a feature needs. If Discord rejects a requested intent at login, check the matching Developer Portal switch and access for the application. Features that need a disabled capability should explain the exact setting and portal switch, and must stop without trying the protected operation. Review permissions and data access for each new feature before trying it.
 
 ## Try a pull request
 
@@ -57,11 +62,15 @@ If PowerShell blocks local scripts, run it in a one-off PowerShell process:
 powershell -ExecutionPolicy Bypass -File .\scripts\try-pr.ps1 -PullRequestNumber 6
 ```
 
-The helper requires a clean checkout, Node.js 24.15 or newer in the 24.x line, and at least one valid allowed test user or role ID in `.env`. It creates `.env` from the example and stops if you need to fill it in. It fetches the PR's current head into a local `try/pr-<number>` branch, installs locked dependencies, shows the application and test server IDs plus allowlist counts without displaying the token or IDs, and asks you to type `DEPLOY` before registering guild-scoped commands. It then starts the bot in the foreground. Try the commands listed in the PR's **Try it** section and press Ctrl+C when finished. The helper will not overwrite a pre-existing local branch with the same name.
+The helper requires a clean checkout, Node.js 24.15 or newer in the 24.x line, and at least one valid allowed test user or role ID in `.env`. It creates `.env` from the example and stops if you need to fill it in. It fetches the PR's current head into a local `try/pr-<number>` branch, installs locked dependencies, shows the application and test server IDs plus allowlist counts without displaying the token or IDs, and asks you to type `DEPLOY` before registering guild-scoped commands. It reads both privileged-intent flags from `.env`, defaults missing values to `false`, and shows their values before deployment. It sets and restores these process environment variables so inherited PowerShell values cannot change the tryout. It then starts the bot in the foreground. Try the commands listed in the PR's **Try it** section and press Ctrl+C when finished. The helper will not overwrite a pre-existing local branch with the same name.
 
 ### Try authorization
 
-Use `/health` as an allowlisted user in the configured test server; it should respond privately with the bot and storage status. Try again from a second test account that is not allowlisted; it should receive the generic private message `You are not authorized to use this bot here.` If you configured a test role instead, verify a member with that role is allowed and one without it is denied. Guild-scoped registration keeps the command out of other servers, and the runtime also rejects interactions whose guild ID differs from `DISCORD_DEV_GUILD_ID`.
+Use `/health` as an allowlisted user in the configured test server; it should respond privately with the bot, storage, and configured optional-intent status. By default, Server Members and Message Content should both be shown as disabled. Try again from a second test account that is not allowlisted; it should receive the generic private message `You are not authorized to use this bot here.` If you configured a test role instead, verify a member with that role is allowed and one without it is denied. Guild-scoped registration keeps the command out of other servers, and the runtime also rejects interactions whose guild ID differs from `DISCORD_DEV_GUILD_ID`.
+
+### Privileged-intent capability check
+
+As of October 30, 2026, unit tests verify that the bot requests only Guilds by default, opts into each privileged intent independently, and formats actionable messages for unavailable capabilities. The PR #38 tryout read both flags as false, registered five guild commands, and started the bot with SQLite schema v7. No `/health` interaction was submitted. The updated response and a connection with either privileged intent enabled have not been confirmed in Discord; enable an intent only when its dependent feature is being tested, and verify the matching Developer Portal switch first.
 
 To return to the main branch afterward:
 
