@@ -121,7 +121,7 @@ M2-15 implementation adds schema v6 with a transactional, append-only audit log 
 | --- | --- | --- |
 | 16 | [x] [Implement provider interface](https://github.com/wavphile/discord_bot/issues/29) | Configurable endpoint, model, timeout, token budget, and per-server usage limits; one hosted provider works; mocked provider supports tests |
 | 17 | [x] [Answer configuration questions](https://github.com/wavphile/discord_bot/issues/31) | `/ask` retrieves relevant authorized configuration and returns evidence with snapshot time; missing or stale data is disclosed |
-| 18 | [Convert AI suggestions into plans](https://github.com/wavphile/discord_bot/issues/33) | Model output is schema validated, targets are resolved by application code, and all writes use M2 approval/execution; unsupported actions are rejected |
+| 18 | [x] [Convert AI suggestions into plans](https://github.com/wavphile/discord_bot/issues/33) | Model output is schema validated, targets are resolved by application code, and all writes use M2 approval/execution; unsupported actions are rejected |
 | 19 | Harden AI boundaries | Test injected instructions, fabricated IDs, cross-server requests, excessive context, provider failure, and unauthorized settings access |
 
 Exit gate: answer “Why can member X see channel Y?” with verifiable evidence; propose a batch change; apply only after explicit approval. Ordinary questions never modify the server.
@@ -131,6 +131,8 @@ M3-16 adds a provider-neutral interface, deterministic mock, OpenAI Responses ad
 M3-16 validation passed on October 30, 2026: all 78 tests, type checking, production build, and GitHub Actions passed. The PR tryout registered the existing four guild commands and started the bot with SQLite schema v7. No AI command exists in this scope, so the OpenAI API was not called; live provider behavior and the account's data-control settings remain to be tested before a later feature sends server data.
 
 M3-17 implementation passed on October 30, 2026: the 86-test suite, type checking, production build, changed-file formatting, GitHub Actions, and the PR tryout all passed. The tryout started the bot with schema v7 and registered five guild commands. The `/ask` live Discord smoke test was not run; it remains outstanding until a separately confirmed test can run in `#bots`. The default mock provider makes no hosted API call. See [testing.md](testing.md).
+
+M3-18 implementation passed on October 30, 2026: all 96 tests, type checking, production build, changed-file formatting, GitHub Actions, and the PR tryout passed. The tryout registered five guild commands, started with schema v7, and shut down cleanly. A useful `/plan suggest` interaction and hosted-provider output remain unverified; the configured mock returns prose and the command fails closed without saving a plan. See [testing.md](testing.md) for the test workflow and follow-up.
 
 ### Milestone M4 — bounded message and member analysis (`v0.5.0`)
 
