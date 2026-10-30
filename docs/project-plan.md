@@ -164,8 +164,8 @@ M4-24 adds opt-in SQLite retention through separate `/messages config storage-en
 | --- | --- | --- |
 | 25 | [Verify amd64 and arm64 deployments](https://github.com/wavphile/discord_bot/issues/47) | Same release runs on a Linux VM and an actual 64-bit Raspberry Pi; record model, RAM, server size, and measured resource usage |
 | 26 | [Implement operational recovery](https://github.com/wavphile/discord_bot/issues/49) | Health checks, graceful stop, database-safe backup, restore rehearsal, disk-space handling, and token rotation guide |
-| 27 | Verify upgrade and downgrade procedure | Test migration from previous release; document that older images may require restoring a matching database backup |
-| 28 | Document feature extension | Add an example read-only feature using the module interface; module author does not modify executor or provider internals |
+| 27 | [x] [Verify upgrade and downgrade procedure](https://github.com/wavphile/discord_bot/issues/51) | Test migration from previous release; document that older images may require restoring a matching database backup |
+| 28 | [ ] [Document feature extension](https://github.com/wavphile/discord_bot/issues/53) | Add an example read-only feature using the module interface; module author does not modify executor or provider internals |
 | 29 | Validate second AI provider | Same question/plan contract works through a second adapter; failures and usage limits behave consistently |
 | 30 | Publish first stable release | Release notes, supported-settings matrix, setup guide, operating limits, privacy/retention explanation, and known issues are complete |
 
@@ -175,7 +175,9 @@ M5-25 is tracked in [issue #47](https://github.com/wavphile/discord_bot/issues/4
 
 M5-26 was completed in [PR #50](https://github.com/wavphile/discord_bot/pull/50). GitHub Actions passed the application checks and native amd64/arm64 container smoke tests for health and backup/restore; the PowerShell tryout connected to Keta’s Crackhouse. The health endpoint and recovery commands are documented in [operations.md](operations.md). Physical VM/Pi operating and restore measurements remain deployment follow-up work under M5-25.
 
-M5-27 is tracked in [issue #51](https://github.com/wavphile/discord_bot/issues/51). Upgrade and schema-matched rollback steps are documented in [upgrades.md](upgrades.md); the automated v7-to-v8 upgrade and newer-schema rollback rehearsals cover the data-preservation contract.
+M5-27 was completed in [PR #52](https://github.com/wavphile/discord_bot/pull/52). The v7-to-v8 upgrade and newer-schema rollback rehearsal passed in native amd64 and arm64 production-container CI, including preservation of a matching pre-restore database. Upgrade and schema-matched rollback steps are in [upgrades.md](upgrades.md). A physical deployment using an earlier release image remains a follow-up for M5-25.
+
+M5-28 is tracked in [issue #53](https://github.com/wavphile/discord_bot/issues/53). The read-only command-module interface and contributor guide are being implemented; live interaction testing remains a release follow-up if not available during the PR cycle.
 
 ## 5. Important execution contracts
 

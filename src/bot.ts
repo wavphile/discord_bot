@@ -12,6 +12,7 @@ import { executePermissionsCommand } from "./discord/commands/permissions.js";
 import { executeServerCommand } from "./discord/commands/server.js";
 import { executeMessagesCommand } from "./discord/commands/messages.js";
 import { executeSummarizeCommand } from "./discord/commands/summarize.js";
+import { executeFeatureModule } from "./discord/modules/index.js";
 import { registerMessageRetentionEvents } from "./discord/message-retention.js";
 import {
   createDiscordPlanJobAdapter,
@@ -179,6 +180,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
         },
         gatewayCapabilities,
       );
+    } else {
+      await executeFeatureModule(interaction);
     }
   } catch (error) {
     logger.error("discord.interaction.failed", error, {

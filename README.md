@@ -8,6 +8,8 @@ Requirements: Node.js 24.15 or newer in the 24.x line and an application created
 
 To try a pull request against a safe Discord test server, follow [the testing guide](docs/testing.md). Pull requests include a runnable tryout section, and GitHub Actions checks formatting, types, and the production build without Discord credentials.
 
+For the in-repository read-only command-module contract and a complete example, see [the feature module guide](docs/modules.md).
+
 1. Copy `.env.example` to `.env` and set the bot token, application ID, development server ID, and at least one allowed test user or role ID. Keep `.env` private.
 2. Install dependencies with `npm ci`.
 3. Register the development command with `npm run deploy:commands`.
