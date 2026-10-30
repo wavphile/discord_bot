@@ -98,4 +98,48 @@ export const migrations: readonly Migration[] = [
       `);
     },
   },
+  {
+    version: 5,
+    name: "create_durable_plan_jobs",
+    up(database) {
+      database.exec(`
+        CREATE TABLE plan_jobs (
+          job_id TEXT PRIMARY KEY,
+          plan_id TEXT NOT NULL UNIQUE REFERENCES change_plans(plan_id),
+          guild_id TEXT NOT NULL,
+          requested_by TEXT NOT NULL,
+          approved_by TEXT NOT NULL,
+          created_by TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          started_at TEXT,
+          finished_at TEXT,
+          status TEXT NOT NULL CHECK (status IN (
+            'queued', 'running', 'reconciliation_required',
+            'applied', 'partial', 'failed', 'conflicted', 'cancelled'
+          )),
+          cancel_requested INTEGER NOT NULL DEFAULT 0 CHECK (cancel_requested IN (0, 1))
+        );
+        CREATE INDEX plan_jobs_guild_status_created
+          ON plan_jobs (guild_id, status, created_at);
+
+        CREATE TABLE plan_job_items (
+          job_id TEXT NOT NULL REFERENCES plan_jobs(job_id) ON DELETE CASCADE,
+          plan_id TEXT NOT NULL,
+          ordinal INTEGER NOT NULL CHECK (ordinal >= 0),
+          status TEXT NOT NULL CHECK (status IN (
+            'pending', 'applying', 'applied', 'failed', 'conflicted', 'cancelled'
+          )),
+          attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+          last_error TEXT,
+          started_at TEXT,
+          finished_at TEXT,
+          PRIMARY KEY (job_id, ordinal),
+          FOREIGN KEY (plan_id, ordinal)
+            REFERENCES change_plan_items(plan_id, ordinal)
+        ) WITHOUT ROWID;
+        CREATE INDEX plan_job_items_status
+          ON plan_job_items (job_id, status, ordinal);
+      `);
+    },
+  },
 ];

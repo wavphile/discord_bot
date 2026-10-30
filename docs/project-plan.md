@@ -101,8 +101,8 @@ M1 exit gate: M1-09's owner case and unit checks passed. The representative non-
 | --- | --- | --- |
 | 11 | [x] [Build structured change plans](https://github.com/wavphile/discord_bot/issues/19) | Plans store server, requester, exact targets, old/new values, snapshot reference, expiry, and status; preview makes no edits |
 | 12 | [x] [Implement first batch operations](https://github.com/wavphile/discord_bot/issues/21) | Support text-channel slow mode, channel topics, and selected role/channel permissions; selectors resolve to a fixed visible target list |
-| 13 | [Add approval and conflict checks](https://github.com/wavphile/discord_bot/issues/23) | Only authorized approvers can apply; recheck requester, bot capability, and current values immediately before each operation; changed targets conflict rather than being overwritten |
-| 14 | Implement durable job execution | Per-server serialization, rate-limit handling, bounded retries, cancellation between items, and per-item results; restart reconciles ambiguous operations before retry |
+| 13 | [x] [Add approval and conflict checks](https://github.com/wavphile/discord_bot/issues/23) | Only authorized approvers can apply; recheck requester, bot capability, and current values immediately before each operation; changed targets conflict rather than being overwritten |
+| 14 | [x] [Implement durable job execution](https://github.com/wavphile/discord_bot/issues/25) | Per-server serialization, rate-limit handling, bounded retries, cancellation between items, and per-item results; restart reconciles ambiguous operations before retry |
 | 15 | Add recovery and audit records | Record actor, approver, reason, plan and job IDs, before/after values, and outcome; supported reversal creates a new reviewed plan and detects subsequent edits |
 
 Exit gate: preview and apply changes across at least 10 test channels; simulate an API failure and process restart; verify no duplicate or silently overwritten changes. Discord operations are not atomic, and the result must show partial completion explicitly.
@@ -110,6 +110,8 @@ Exit gate: preview and apply changes across at least 10 test channels; simulate 
 M2-11 implementation passed on October 30, 2026: schema v3 stores bounded, ordered change plans atomically; validates text/voice overwrite targets and selected permission-bit changes; scopes optional snapshots to the same server; and returns expired pending plans as expired without writing during preview. The 28-test suite, type check, build, and changed-file formatting checks passed. The PR tryout confirmed `/health` reports schema v3 in `#bots`. The interactive plan-preview workflow was delivered in M2-12.
 
 M2-12 Discord smoke test passed on October 30, 2026: `/plan slowmode` created a private `#bots` preview with current value 0, proposed value 5, a 30-minute expiry, and an explicit no-settings-changed notice. The result is recorded in [testing.md](testing.md). Live `/plan topic` and `/plan permission` checks remain pending.
+
+M2-13/14 implementation passed on October 30, 2026: schema v5 persists approved execution jobs and ordered item state; apply rechecks the requester, bot permissions, target, and exact before-value before every write. Per-server work is serialized, transient failures have at most three write attempts and respect returned retry-after values, cancellation stops between items, and item outcomes are stored and shown privately. On restart, an interrupted item is reconciled against the before/after/current value before any retry. The 60-test suite covers persistence, serialization, bounded retries, partial failures, cancellation, and restart recovery; typecheck, build, formatting, CI, and the PR tryout health check passed. As recorded in [testing.md](testing.md), live `/plan apply` changes, second-account approval, and the 10-channel Discord exit-gate scenario remain unverified.
 
 ### Milestone M3 — AI configuration assistant (`v0.4.0`)
 

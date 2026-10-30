@@ -33,7 +33,7 @@ npm run deploy:commands
 npm run dev
 ```
 
-Keep the bot running, open the test server, and follow the pull request's **Try it** steps. Run `/health`; it should privately report that the bot is responding and SQLite schema v4 is ready. Run `/server inspect`; it should privately report a snapshot ID, capture time, role/category/channel/overwrite counts, and limited channel visibility. The command stores a configuration snapshot in SQLite. It does not change server settings and is not a complete server backup.
+Keep the bot running, open the test server, and follow the pull request's **Try it** steps. Run `/health`; it should privately report that the bot is responding and SQLite schema v5 is ready. Run `/server inspect`; it should privately report a snapshot ID, capture time, role/category/channel/overwrite counts, and limited channel visibility. The command stores a configuration snapshot in SQLite. It does not change server settings and is not a complete server backup.
 
 Run `/server inspect` a second time, then `/server diff`. The private comparison should show the two capture times and any differences in supported server settings, roles, returned channels, and channel permission overwrites. The comparison always warns that channel visibility is limited: a channel returned in only one snapshot may have been added or deleted, or may have become visible or inaccessible to the bot. Its presence alone does not establish which. Details for a channel that was unviewable in either snapshot are omitted. With fewer than two snapshots, `/server diff` asks you to capture another one.
 
@@ -99,9 +99,25 @@ The original requester can submit a current preview for approval. Only the separ
 /plan reject plan_id:<full-plan-uuid>
 ```
 
-Approval runs a fresh, read-only check of the requester's current authorization, the bot's channel permissions and role hierarchy, and every planned value. If any target cannot be read or written, or its current value differs from the preview, the whole plan becomes conflicted. The requester cannot approve their own plan. A successful approval only records approval; applying changes is a later project-plan step. The eventual executor must repeat the same preflight immediately before each Discord write.
+Approval runs a fresh, read-only check of the requester's current authorization, the bot's channel permissions and role hierarchy, and every planned value. If any target cannot be read or written, or its current value differs from the preview, the whole plan becomes conflicted. The requester cannot approve their own plan. Approval records a decision but does not itself change Discord settings. A configured approver must separately start an execution job.
 
-As of October 30, 2026, a second test account is unavailable. Unit and storage tests cover separate authorization, self-approval rejection, expiry, transitions, and conflicts. Live approval by another account remains pending; the feature has no Discord settings write path yet.
+As of October 30, 2026, a second test account is unavailable. Unit and storage tests cover separate authorization, self-approval rejection, expiry, transitions, and conflicts. Live approval by another account remains pending.
+
+### Run an approved plan as a durable job
+
+Only a configured approver can start a job for a current approved plan:
+
+```text
+/plan apply plan_id:<full-plan-uuid>
+/plan status job_id:<full-job-uuid>
+/plan cancel job_id:<full-job-uuid>
+```
+
+The job and its ordered items are committed to SQLite before any Discord write. The bot processes one job at a time per server; other servers can progress independently. It rechecks the requester, bot permissions, channel/role target, and exact `before` value immediately before each item. The Discord.js REST layer handles Discord rate limits. Transient failures are retried at most three application attempts, and any returned `Retry-After` duration is respected. Each job status response lists the state and last error for every item.
+
+Cancellation takes effect between items. An in-flight Discord request is allowed to finish; already-applied items remain visible as partial progress. If the process stops while an item is marked `applying`, startup reads the live setting before doing anything else: the saved `after` value is recorded as applied, the original `before` value is safe to retry within the remaining attempt limit, and any third value becomes a conflict. If Discord cannot be read, the job stays `reconciliation_required` and blocks later jobs for that server; restore access and restart the bot to retry reconciliation. This value-based recovery cannot distinguish an apply followed by an administrator reverting the value to the original state.
+
+Live tests that write settings are pending. Use disposable test channels and an approver account separate from the requester. Do not try `/plan apply` in the private server until you are ready for the approved setting changes to be applied. The automated runner tests cover serialized jobs, bounded transient retries, partial failures, cancellation, and restart reconciliation; the 10-channel Discord exit-gate test remains unverified.
 
 As of October 30, 2026, a live test-server smoke test passed for `/plan slowmode channels:#bots seconds:5`: the private preview resolved `#bots`, showed slowmode `0` before and `5` after, saved a preview expiring in 30 minutes, and confirmed no Discord changes were applied. Live smoke tests for `/plan topic` and `/plan permission` are still pending; their automated checks pass, but they should be tried in Discord before a later release that depends on them. The permission test requires a custom unmanaged role.
 
@@ -109,7 +125,7 @@ The permission preview preserves all existing overwrite bits while changing only
 
 ### Try the storage migration and restart persistence
 
-The storage foundation has no configuration-writing Discord command yet. You can exercise the same SQLite store with the local tryout command, using your test server ID and a harmless marker:
+The bot now has a configuration-writing `/plan apply` command, guarded by the separate approver allowlist and exact-value preflight. For storage-only persistence checks, you can also use the local tryout command with your test server ID and a harmless marker:
 
 ```sh
 npm run storage:tryout -- write <test-server-id>

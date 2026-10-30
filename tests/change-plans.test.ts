@@ -73,17 +73,17 @@ function createInput(
   };
 }
 
-test("migration 4 adds approval metadata to the change-plan schema", () => {
+test("migration 5 adds durable plan-job storage after approval metadata", () => {
   const database = openDatabase(":memory:");
   try {
-    assert.equal(getSchemaVersion(database), 4);
+    assert.equal(getSchemaVersion(database), 5);
     assert.equal(
       database
         .prepare(
-          "SELECT COUNT(*) AS count FROM sqlite_master WHERE type = 'table' AND name IN ('change_plans', 'change_plan_items')",
+          "SELECT COUNT(*) AS count FROM sqlite_master WHERE type = 'table' AND name IN ('change_plans', 'change_plan_items', 'plan_jobs', 'plan_job_items')",
         )
         .get()?.["count"],
-      2,
+      4,
     );
   } finally {
     database.close();
