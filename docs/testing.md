@@ -70,7 +70,7 @@ Use `/health` as an allowlisted user in the configured test server; it should re
 
 ### Privileged-intent capability check
 
-As of October 30, 2026, unit tests verify that the bot requests only Guilds by default, opts into each privileged intent independently, and formats actionable messages for unavailable capabilities. Both privileged intent flags remain false in the test configuration. The updated `/health` response and a connection with either privileged intent enabled have not been confirmed in Discord; enable an intent only when its dependent feature is being tested, and verify the matching Developer Portal switch first.
+As of October 30, 2026, unit tests verify that the bot requests only Guilds by default, opts into each privileged intent independently, and formats actionable messages for unavailable capabilities. The PR #38 tryout read both flags as false, registered five guild commands, and started the bot with SQLite schema v7. No `/health` interaction was submitted. The updated response and a connection with either privileged intent enabled have not been confirmed in Discord; enable an intent only when its dependent feature is being tested, and verify the matching Developer Portal switch first.
 
 To return to the main branch afterward:
 

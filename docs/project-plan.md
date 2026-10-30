@@ -148,7 +148,7 @@ M3-19 automated hardening passed on October 30, 2026: all 105 tests, type checki
 
 Exit gate: member without access to a restricted channel cannot obtain its content through answers, citations, cached context, or summaries. Document how external providers process submitted data before enabling this feature.
 
-M4-20 adds strict opt-in flags for Server Members and Message Content intents, leaves both off by default, reports configured intent requests in `/health`, and provides actionable capability explanations for later member/message features. Disallowed-intent login failures receive a fixed Developer Portal hint without logging error text or credentials. Automated validation passed with 112 tests, type checking, production build, and changed-file formatting. The live `/health` output and enabling a privileged intent in the test application's Developer Portal remain unverified; see [testing.md](testing.md).
+M4-20 adds strict opt-in flags for Server Members and Message Content intents, leaves both off by default, reports configured intent requests in `/health`, and provides actionable capability explanations for later member/message features. Disallowed-intent login failures receive a fixed Developer Portal hint without logging error text or credentials. Validation passed with 112 tests, type checking, production build, changed-file formatting, GitHub Actions, and the PR #38 tryout. The tryout registered five guild commands and started the bot with schema v7 and both privileged intents disabled. The live `/health` output and enabling a privileged intent in the test application's Developer Portal remain unverified; see [testing.md](testing.md).
 
 ### Milestone M5 — deployment and release hardening (`v1.0.0`)
 
