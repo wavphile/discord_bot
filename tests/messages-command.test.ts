@@ -26,6 +26,7 @@ function interaction(
     botCanRead?: boolean;
     retentionDays?: number | null;
     confirm?: boolean;
+    provider?: string;
   }>,
 ): {
   value: ChatInputCommandInteraction;
@@ -79,7 +80,7 @@ function interaction(
         getInteger: (name: string) =>
           name === "retention_days" ? (options.retentionDays ?? null) : null,
         getBoolean: () => options.confirm ?? false,
-        getString: () => "mock",
+        getString: () => options.provider ?? "mock",
       },
       reply: async (reply: { content: string }) => replies.push(reply.content),
     } as unknown as ChatInputCommandInteraction,
@@ -102,6 +103,7 @@ const provider: AiProvider = {
     };
   },
 };
+const anthropicProvider: AiProvider = { ...provider, id: "anthropic" };
 
 test("message retrieval settings are visible privately but disabled by default", async () => {
   const database = openDatabase(":memory:");
@@ -353,6 +355,53 @@ test("only a Manage Server member can enable retrieval for a local text channel"
       [channelId],
     );
     assert.match(allowed.replies[0] ?? "", /not stored/);
+  } finally {
+    database.close();
+  }
+});
+
+test("message analysis only selects providers configured locally", async () => {
+  const database = openDatabase(":memory:");
+  try {
+    const unavailable = interaction({
+      subcommand: "provider",
+      group: "config",
+      manageGuild: true,
+      provider: "anthropic",
+    });
+    await executeMessagesCommand(
+      unavailable.value,
+      database,
+      "mock",
+      new Map([["mock", provider]]),
+    );
+    assert.match(unavailable.replies[0] ?? "", /ANTHROPIC_API_KEY/);
+    assert.equal(
+      getMessageRetrievalSettings(database, guildId, "mock").provider,
+      "mock",
+    );
+
+    const available = interaction({
+      subcommand: "provider",
+      group: "config",
+      manageGuild: true,
+      provider: "anthropic",
+    });
+    await executeMessagesCommand(
+      available.value,
+      database,
+      "mock",
+      new Map([
+        ["mock", provider],
+        ["anthropic", anthropicProvider],
+      ]),
+    );
+    assert.match(available.replies[0] ?? "", /anthropic provider/);
+    assert.match(available.replies[0] ?? "", /provider data handling/);
+    assert.equal(
+      getMessageRetrievalSettings(database, guildId, "mock").provider,
+      "anthropic",
+    );
   } finally {
     database.close();
   }

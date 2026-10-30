@@ -213,9 +213,10 @@ function suggestionProvider(
   response: string,
   onGenerate?: () => void,
   calls = { counted: 0, generated: 0 },
+  providerId = "fixture",
 ): AiProvider {
   return {
-    id: "fixture",
+    id: providerId,
     model: "fixture-v1",
     async countInputTokens() {
       calls.counted += 1;
@@ -226,7 +227,7 @@ function suggestionProvider(
       onGenerate?.();
       return {
         text: response,
-        provider: "fixture",
+        provider: providerId,
         model: "fixture-v1",
         usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
       };
@@ -242,6 +243,7 @@ function commandFixture(options: {
   maxInputTokens?: number;
   requestedRoleId?: string;
   onGenerate?: () => void;
+  providerId?: string;
 }) {
   const channel = {
     id: channelId,
@@ -303,6 +305,7 @@ function commandFixture(options: {
     options.response,
     options.onGenerate,
     providerCalls,
+    options.providerId,
   );
   const context = {
     requesterAuthorization: {
@@ -359,6 +362,28 @@ test("suggest command privately saves only a normal preview without storing the 
     assert.equal(plan.reason, "Test a plan preview");
     assert.equal(plan.source_snapshot_id, null);
     assert.doesNotMatch(JSON.stringify(plan), /Set a five second slowmode/);
+    assert.equal(
+      database
+        .prepare("SELECT COUNT(*) AS count FROM change_plan_items")
+        .get()?.["count"],
+      1,
+    );
+  } finally {
+    database.close();
+  }
+});
+
+test("suggest command accepts structured output through the Anthropic provider contract", async () => {
+  const database = openDatabase(":memory:");
+  const fixture = commandFixture({
+    providerId: "anthropic",
+    response: encoded([{ target_index: 0, setting: "slowmode", seconds: 5 }]),
+  });
+  try {
+    await executePlanCommand(fixture.interaction, database, fixture.context);
+    assert.match(fixture.replies.join("\n"), /Change plan preview/);
+    assert.equal(fixture.providerCalls.counted, 1);
+    assert.equal(fixture.providerCalls.generated, 1);
     assert.equal(
       database
         .prepare("SELECT COUNT(*) AS count FROM change_plan_items")

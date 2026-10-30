@@ -22,7 +22,7 @@ const botId = "44444444444444444";
 
 function fixture(
   options: Readonly<{
-    providerId?: "mock" | "openai";
+    providerId?: "mock" | "openai" | "anthropic";
     text?: string;
     channelType?: ChannelType;
     messageContent?: boolean;
@@ -255,6 +255,20 @@ test("summarize labels mock output and links only bounded test sources", async (
     assert.match(reply.content, /https:\/\/discord\.com\/channels/);
   } finally {
     mock.database.close();
+  }
+});
+
+test("summarize accepts the Anthropic provider through the shared contract", async () => {
+  const anthropic = fixture({ providerId: "anthropic" });
+  try {
+    await run(anthropic);
+    const reply = anthropic.lastReply();
+    assert.ok(reply && typeof reply !== "string");
+    assert.match(reply.content, /AI-generated summary/);
+    assert.doesNotMatch(reply.content, /Mock provider test output/);
+    assert.equal(anthropic.generationCalls(), 1);
+  } finally {
+    anthropic.database.close();
   }
 });
 

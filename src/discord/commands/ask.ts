@@ -168,7 +168,9 @@ export async function executeAskCommand(
     return;
   }
   const defaultProviderId: MessageProviderId =
-    provider.id === "openai" ? "openai" : "mock";
+    provider.id === "openai" || provider.id === "anthropic"
+      ? provider.id
+      : "mock";
   const messageSettings = includeMessages
     ? getMessageRetrievalSettings(database, guildId, defaultProviderId)
     : null;

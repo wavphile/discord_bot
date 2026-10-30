@@ -165,8 +165,8 @@ M4-24 adds opt-in SQLite retention through separate `/messages config storage-en
 | 25 | [Verify amd64 and arm64 deployments](https://github.com/wavphile/discord_bot/issues/47) | Same release runs on a Linux VM and an actual 64-bit Raspberry Pi; record model, RAM, server size, and measured resource usage |
 | 26 | [Implement operational recovery](https://github.com/wavphile/discord_bot/issues/49) | Health checks, graceful stop, database-safe backup, restore rehearsal, disk-space handling, and token rotation guide |
 | 27 | [x] [Verify upgrade and downgrade procedure](https://github.com/wavphile/discord_bot/issues/51) | Test migration from previous release; document that older images may require restoring a matching database backup |
-| 28 | [ ] [Document feature extension](https://github.com/wavphile/discord_bot/issues/53) | Add an example read-only feature using the module interface; module author does not modify executor or provider internals |
-| 29 | Validate second AI provider | Same question/plan contract works through a second adapter; failures and usage limits behave consistently |
+| 28 | [x] [Document feature extension](https://github.com/wavphile/discord_bot/issues/53) | Add an example read-only feature using the module interface; module author does not modify executor or provider internals |
+| 29 | [x] [Validate second AI provider](https://github.com/wavphile/discord_bot/issues/55) | Same question/plan contract works through a second adapter; failures and usage limits behave consistently |
 | 30 | Publish first stable release | Release notes, supported-settings matrix, setup guide, operating limits, privacy/retention explanation, and known issues are complete |
 
 Exit gate: all MVP scenarios pass on both hosting targets; restore succeeds; no unresolved high-impact authorization or batch-execution defects.
@@ -177,7 +177,9 @@ M5-26 was completed in [PR #50](https://github.com/wavphile/discord_bot/pull/50)
 
 M5-27 was completed in [PR #52](https://github.com/wavphile/discord_bot/pull/52). The v7-to-v8 upgrade and newer-schema rollback rehearsal passed in native amd64 and arm64 production-container CI, including preservation of a matching pre-restore database. Upgrade and schema-matched rollback steps are in [upgrades.md](upgrades.md). A physical deployment using an earlier release image remains a follow-up for M5-25.
 
-M5-28 is tracked in [issue #53](https://github.com/wavphile/discord_bot/issues/53). The read-only command-module interface and contributor guide are being implemented; live interaction testing remains a release follow-up if not available during the PR cycle.
+M5-28 was completed in [PR #54](https://github.com/wavphile/discord_bot/pull/54): the read-only command-module interface, `/server-info` example, tests, and contributor guide are merged. The live `/server-info` interaction remains an optional test-server follow-up.
+
+M5-29 is tracked in [issue #55](https://github.com/wavphile/discord_bot/issues/55). The Anthropic Messages adapter, token accounting, provider selection, and error mapping are implemented and automatically tested. The default remains `mock`; the live Anthropic API call remains a documented follow-up because no key is needed for the PR tryout.
 
 ## 5. Important execution contracts
 

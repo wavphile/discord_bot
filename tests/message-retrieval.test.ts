@@ -54,6 +54,16 @@ test("message retrieval defaults off and rejects invalid stored settings", () =>
   assert.equal(
     isMessageRetrievalSettings({
       enabled: true,
+      channelIds: [channelId],
+      maxAgeDays: 1,
+      maxMessages: 20,
+      provider: "anthropic",
+    }),
+    true,
+  );
+  assert.equal(
+    isMessageRetrievalSettings({
+      enabled: true,
       channelIds: ["not-a-snowflake"],
       maxAgeDays: 8,
       maxMessages: 51,
