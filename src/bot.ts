@@ -1,6 +1,6 @@
 import { Client, Events, MessageFlags, type BaseInteraction } from "discord.js";
 import { env } from "./config/env.js";
-import { createAiProvider } from "./ai/index.js";
+import { createAiProviders } from "./ai/index.js";
 import {
   authorizeInteraction,
   authorizePlanApprover,
@@ -10,6 +10,7 @@ import { executeAskCommand } from "./discord/commands/ask.js";
 import { executePlanCommand } from "./discord/commands/plan.js";
 import { executePermissionsCommand } from "./discord/commands/permissions.js";
 import { executeServerCommand } from "./discord/commands/server.js";
+import { executeMessagesCommand } from "./discord/commands/messages.js";
 import {
   createDiscordPlanJobAdapter,
   DurablePlanJobRunner,
@@ -28,7 +29,9 @@ const gatewayCapabilities = {
 const client = new Client({
   intents: createGatewayIntents(gatewayCapabilities),
 });
-const aiProvider = createAiProvider(env);
+const aiProviders = createAiProviders(env);
+const aiProvider = aiProviders.get(env.AI_PROVIDER);
+if (!aiProvider) throw new Error("The configured AI provider is unavailable.");
 const database = openDatabase(env.DATABASE_PATH);
 const schemaVersion = getSchemaVersion(database);
 const authorizationPolicy = {
@@ -109,12 +112,19 @@ client.on(Events.InteractionCreate, async (interaction) => {
         gatewayCapabilities,
       );
     } else if (interaction.commandName === "ask") {
-      await executeAskCommand(interaction, database, aiProvider, {
-        maxInputTokens: env.AI_MAX_INPUT_TOKENS,
-        maxOutputTokens: env.AI_MAX_OUTPUT_TOKENS,
-        dailyTokenBudgetPerGuild: env.AI_DAILY_TOKEN_BUDGET_PER_GUILD,
-        requestTimeoutMs: env.AI_REQUEST_TIMEOUT_MS,
-      });
+      await executeAskCommand(
+        interaction,
+        database,
+        aiProvider,
+        {
+          maxInputTokens: env.AI_MAX_INPUT_TOKENS,
+          maxOutputTokens: env.AI_MAX_OUTPUT_TOKENS,
+          dailyTokenBudgetPerGuild: env.AI_DAILY_TOKEN_BUDGET_PER_GUILD,
+          requestTimeoutMs: env.AI_REQUEST_TIMEOUT_MS,
+        },
+        aiProviders,
+        gatewayCapabilities,
+      );
     } else if (interaction.commandName === "plan") {
       await executePlanCommand(interaction, database, {
         requesterAuthorization: authorizationPolicy,
@@ -132,6 +142,13 @@ client.on(Events.InteractionCreate, async (interaction) => {
       await executeServerCommand(interaction, client, database);
     } else if (interaction.commandName === "permissions") {
       await executePermissionsCommand(interaction);
+    } else if (interaction.commandName === "messages") {
+      await executeMessagesCommand(
+        interaction,
+        database,
+        env.AI_PROVIDER,
+        aiProviders,
+      );
     }
   } catch (error) {
     logger.error("discord.interaction.failed", error, {

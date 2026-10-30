@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { ChannelType, PermissionFlagsBits } from "discord.js";
+import { ChannelType, Collection, PermissionFlagsBits } from "discord.js";
 import { AiProviderError } from "../src/ai/errors.js";
 import type { AiCompletion, AiPrompt, AiProvider } from "../src/ai/types.js";
 import type { ChatInputCommandInteraction } from "discord.js";
 import { executeAskCommand } from "../src/discord/commands/ask.js";
 import { openDatabase } from "../src/storage/database.js";
 import { saveConfigurationSnapshot } from "../src/storage/snapshots.js";
+import { setMessageRetrievalSettings } from "../src/storage/message-retrieval.js";
 
 const guildId = "11111111111111111";
 const channelId = "22222222222222222";
@@ -25,11 +26,27 @@ function fixture(
     memberGuildId?: string;
     includeMemberRole?: boolean;
     noChannel?: boolean;
+    includeMessages?: boolean;
+    messageContent?: boolean;
+    canReadHistory?: boolean;
+    canBotReadHistory?: boolean;
+    canManageThreads?: boolean;
+    privateThreadMemberFetchFails?: boolean;
+    beforePermissionCheck?: () => void;
+    channelType?: ChannelType;
+    messages?: readonly Readonly<{
+      id: string;
+      authorId: string;
+      content: string;
+      createdAt: Date;
+    }>[];
   }> = {},
 ) {
   const replies: string[] = [];
   let providerCalls = 0;
   let generationCalls = 0;
+  let messageFetches = 0;
+  let threadMemberFetches = 0;
   let lastPrompt: AiPrompt | undefined;
   let lastReply:
     { content: string; allowedMentions?: { parse: string[] } } | undefined;
@@ -66,9 +83,65 @@ function fixture(
   };
   const channel = {
     id: channelId,
+    name: "bots",
     guildId: options.channelGuildId ?? guildId,
-    type: ChannelType.GuildText,
-    permissionsFor: () => ({ has: () => canView }),
+    type: options.channelType ?? ChannelType.GuildText,
+    parentId:
+      options.channelType === ChannelType.PublicThread ||
+      options.channelType === ChannelType.PrivateThread ||
+      options.channelType === ChannelType.AnnouncementThread
+        ? channelId
+        : null,
+    permissionsFor: (member: { id: string }) => {
+      options.beforePermissionCheck?.();
+      return {
+        has: (permission: bigint) =>
+          permission === PermissionFlagsBits.ViewChannel
+            ? canView
+            : permission === PermissionFlagsBits.ReadMessageHistory
+              ? member.id === "88888888888888888"
+                ? (options.canBotReadHistory ?? true)
+                : (options.canReadHistory ?? true)
+              : permission === PermissionFlagsBits.ManageThreads
+                ? (options.canManageThreads ?? false)
+                : false,
+      };
+    },
+    messages: {
+      fetch: async ({ limit }: { limit: number }) => {
+        messageFetches += 1;
+        return new Collection(
+          (options.messages ?? []).slice(0, limit).map(
+            (message) =>
+              [
+                message.id,
+                {
+                  id: message.id,
+                  guildId,
+                  channelId,
+                  author: {
+                    id: message.authorId,
+                    bot: false,
+                    username: "Test user",
+                  },
+                  member: { displayName: "Test user" },
+                  createdAt: message.createdAt,
+                  content: message.content,
+                },
+              ] as const,
+          ),
+        );
+      },
+    },
+    members: {
+      fetch: async () => {
+        threadMemberFetches += 1;
+        if (options.privateThreadMemberFetchFails) {
+          throw new Error("not a thread member");
+        }
+        return {};
+      },
+    },
   };
   const guild = {
     id: guildId,
@@ -88,18 +161,24 @@ function fixture(
         }
         return user === requesterId ? requester : targetMember;
       },
+      fetchMe: async () => ({
+        id: "88888888888888888",
+        permissions: { has: () => false },
+      }),
     },
     channels: { fetch: async () => channel },
   };
   const interaction = {
     guild,
     guildId,
+    channelId,
     user: { id: requesterId },
     options: {
       getString: () => options.question ?? "Why can a member see this channel?",
       getChannel: () => (options.noChannel ? null : channel),
       getUser: () =>
         options.selectedUserId ? { id: options.selectedUserId } : null,
+      getBoolean: () => options.includeMessages ?? false,
     },
     deferReply: async () => undefined,
     editReply: async (
@@ -145,6 +224,8 @@ function fixture(
     provider,
     providerCalls: () => providerCalls,
     generationCalls: () => generationCalls,
+    messageFetches: () => messageFetches,
+    threadMemberFetches: () => threadMemberFetches,
     lastPrompt: () => lastPrompt,
     lastReply: () => lastReply,
   };
@@ -223,6 +304,386 @@ test("ask refuses message activity questions without sending a provider request"
     assert.match(mock.replies.at(-1) ?? "", /has not collected messages/);
     assert.equal(mock.providerCalls(), 0);
     assert.equal(mock.generationCalls(), 0);
+  } finally {
+    database.close();
+  }
+});
+
+test("ask keeps message retrieval disabled until a server setting enables it", async () => {
+  const database = openDatabase(":memory:");
+  const mock = fixture(true, {
+    includeMessages: true,
+    question: "What did people say recently?",
+  });
+  try {
+    await executeAskCommand(
+      mock.interaction,
+      database,
+      mock.provider,
+      limits,
+      new Map([["mock", mock.provider]]),
+      {
+        guildMembers: false,
+        messageContent: true,
+      },
+    );
+    assert.match(mock.replies.at(-1) ?? "", /disabled for this server/);
+    assert.equal(mock.providerCalls(), 0);
+  } finally {
+    database.close();
+  }
+});
+
+test("ask requires Message Content capability before message retrieval", async () => {
+  const database = openDatabase(":memory:");
+  const mock = fixture(true, {
+    includeMessages: true,
+    question: "What did people say recently?",
+  });
+  setMessageRetrievalSettings(database, guildId, {
+    enabled: true,
+    channelIds: [channelId],
+    maxAgeDays: 1,
+    maxMessages: 2,
+    provider: "mock",
+  });
+  try {
+    await executeAskCommand(
+      mock.interaction,
+      database,
+      mock.provider,
+      limits,
+      new Map([["mock", mock.provider]]),
+      {
+        guildMembers: false,
+        messageContent: false,
+      },
+    );
+    assert.match(mock.replies.at(-1) ?? "", /message content access/);
+    assert.equal(mock.providerCalls(), 0);
+  } finally {
+    database.close();
+  }
+});
+
+test("ask enforces live channel and history permissions before retrieving messages", async () => {
+  const database = openDatabase(":memory:");
+  const mock = fixture(false, {
+    includeMessages: true,
+    question: "What did people say recently?",
+  });
+  setMessageRetrievalSettings(database, guildId, {
+    enabled: true,
+    channelIds: [channelId],
+    maxAgeDays: 1,
+    maxMessages: 2,
+    provider: "mock",
+  });
+  try {
+    await executeAskCommand(
+      mock.interaction,
+      database,
+      mock.provider,
+      limits,
+      new Map([["mock", mock.provider]]),
+      {
+        guildMembers: false,
+        messageContent: true,
+      },
+    );
+    assert.match(
+      mock.replies.at(-1) ?? "",
+      /current View Channel and Read Message History/,
+    );
+    assert.equal(mock.providerCalls(), 0);
+  } finally {
+    database.close();
+  }
+});
+
+test("ask denies message retrieval when the bot lacks Read Message History", async () => {
+  const database = openDatabase(":memory:");
+  const mock = fixture(true, {
+    includeMessages: true,
+    canBotReadHistory: false,
+    question: "What did people say recently?",
+  });
+  setMessageRetrievalSettings(database, guildId, {
+    enabled: true,
+    channelIds: [channelId],
+    maxAgeDays: 1,
+    maxMessages: 2,
+    provider: "mock",
+  });
+  try {
+    await executeAskCommand(
+      mock.interaction,
+      database,
+      mock.provider,
+      limits,
+      new Map([["mock", mock.provider]]),
+      { guildMembers: false, messageContent: true },
+    );
+    assert.match(mock.replies.at(-1) ?? "", /Read Message History/);
+    assert.equal(mock.messageFetches(), 0);
+    assert.equal(mock.providerCalls(), 0);
+  } finally {
+    database.close();
+  }
+});
+
+test("ask denies message retrieval when the requester lacks Read Message History", async () => {
+  const database = openDatabase(":memory:");
+  const mock = fixture(true, {
+    includeMessages: true,
+    canReadHistory: false,
+    question: "What did people say recently?",
+  });
+  setMessageRetrievalSettings(database, guildId, {
+    enabled: true,
+    channelIds: [channelId],
+    maxAgeDays: 1,
+    maxMessages: 2,
+    provider: "mock",
+  });
+  try {
+    await executeAskCommand(
+      mock.interaction,
+      database,
+      mock.provider,
+      limits,
+      new Map([["mock", mock.provider]]),
+      { guildMembers: false, messageContent: true },
+    );
+    assert.match(
+      mock.replies.at(-1) ?? "",
+      /You need current View Channel and Read Message History/,
+    );
+    assert.equal(mock.messageFetches(), 0);
+    assert.equal(mock.providerCalls(), 0);
+  } finally {
+    database.close();
+  }
+});
+
+test("ask rechecks opt-in settings after Discord access checks", async () => {
+  const database = openDatabase(":memory:");
+  let disabled = false;
+  const mock = fixture(true, {
+    includeMessages: true,
+    question: "What did people say recently?",
+    beforePermissionCheck: () => {
+      if (disabled) return;
+      disabled = true;
+      setMessageRetrievalSettings(database, guildId, {
+        enabled: false,
+        channelIds: [channelId],
+        maxAgeDays: 1,
+        maxMessages: 2,
+        provider: "mock",
+      });
+    },
+  });
+  setMessageRetrievalSettings(database, guildId, {
+    enabled: true,
+    channelIds: [channelId],
+    maxAgeDays: 1,
+    maxMessages: 2,
+    provider: "mock",
+  });
+  try {
+    await executeAskCommand(
+      mock.interaction,
+      database,
+      mock.provider,
+      limits,
+      new Map([["mock", mock.provider]]),
+      { guildMembers: false, messageContent: true },
+    );
+    assert.match(mock.replies.at(-1) ?? "", /disabled for this channel/);
+    assert.equal(mock.messageFetches(), 0);
+    assert.equal(mock.providerCalls(), 0);
+  } finally {
+    database.close();
+  }
+});
+
+test("ask fails closed on a private thread when member verification is unavailable", async () => {
+  const database = openDatabase(":memory:");
+  const mock = fixture(true, {
+    includeMessages: true,
+    channelType: ChannelType.PrivateThread,
+    question: "What did people say recently?",
+  });
+  setMessageRetrievalSettings(database, guildId, {
+    enabled: true,
+    channelIds: [channelId],
+    maxAgeDays: 1,
+    maxMessages: 2,
+    provider: "mock",
+  });
+  try {
+    await executeAskCommand(
+      mock.interaction,
+      database,
+      mock.provider,
+      limits,
+      new Map([["mock", mock.provider]]),
+      { guildMembers: false, messageContent: true },
+    );
+    assert.match(mock.replies.at(-1) ?? "", /Server Members Intent/);
+    assert.equal(mock.threadMemberFetches(), 0);
+    assert.equal(mock.messageFetches(), 0);
+    assert.equal(mock.providerCalls(), 0);
+  } finally {
+    database.close();
+  }
+});
+
+test("ask refuses a private thread when current membership cannot be verified", async () => {
+  const database = openDatabase(":memory:");
+  const mock = fixture(true, {
+    includeMessages: true,
+    channelType: ChannelType.PrivateThread,
+    privateThreadMemberFetchFails: true,
+    question: "What did people say recently?",
+  });
+  setMessageRetrievalSettings(database, guildId, {
+    enabled: true,
+    channelIds: [channelId],
+    maxAgeDays: 1,
+    maxMessages: 2,
+    provider: "mock",
+  });
+  try {
+    await executeAskCommand(
+      mock.interaction,
+      database,
+      mock.provider,
+      limits,
+      new Map([["mock", mock.provider]]),
+      { guildMembers: true, messageContent: true },
+    );
+    assert.match(
+      mock.replies.at(-1) ?? "",
+      /membership.*could not be verified/,
+    );
+    assert.equal(mock.threadMemberFetches(), 1);
+    assert.equal(mock.messageFetches(), 0);
+    assert.equal(mock.providerCalls(), 0);
+  } finally {
+    database.close();
+  }
+});
+
+test("ask verifies requester and bot membership before reading a private thread", async () => {
+  const database = openDatabase(":memory:");
+  const mock = fixture(true, {
+    includeMessages: true,
+    channelType: ChannelType.PrivateThread,
+    question: "What did people say recently?",
+    messages: [
+      {
+        id: "77777777777777777",
+        authorId: requesterId,
+        content: "Recent private thread message",
+        createdAt: new Date(),
+      },
+    ],
+  });
+  setMessageRetrievalSettings(database, guildId, {
+    enabled: true,
+    channelIds: [channelId],
+    maxAgeDays: 1,
+    maxMessages: 2,
+    provider: "mock",
+  });
+  try {
+    await executeAskCommand(
+      mock.interaction,
+      database,
+      mock.provider,
+      limits,
+      new Map([["mock", mock.provider]]),
+      { guildMembers: true, messageContent: true },
+    );
+    assert.equal(mock.threadMemberFetches(), 2);
+    assert.equal(mock.messageFetches(), 1);
+    assert.equal(mock.generationCalls(), 1);
+  } finally {
+    database.close();
+  }
+});
+
+test("ask sends only bounded current-channel messages to the configured provider", async () => {
+  const database = openDatabase(":memory:");
+  const newestAt = new Date();
+  const messages = [
+    {
+      id: "77777777777777777",
+      authorId: requesterId,
+      content: "Newest topic detail",
+      createdAt: newestAt,
+    },
+    {
+      id: "66666666666666666",
+      authorId: requesterId,
+      content: "Earlier topic detail",
+      createdAt: new Date(newestAt.getTime() - 60_000),
+    },
+    {
+      id: "55555555555555555",
+      authorId: requesterId,
+      content: "Oldest topic detail",
+      createdAt: new Date(newestAt.getTime() - 120_000),
+    },
+  ];
+  const mock = fixture(true, {
+    includeMessages: true,
+    question: "What did people say recently?",
+    messages,
+  });
+  setMessageRetrievalSettings(database, guildId, {
+    enabled: true,
+    channelIds: [channelId],
+    maxAgeDays: 1,
+    maxMessages: 2,
+    provider: "mock",
+  });
+  try {
+    await executeAskCommand(
+      mock.interaction,
+      database,
+      mock.provider,
+      limits,
+      new Map([["mock", mock.provider]]),
+      {
+        guildMembers: false,
+        messageContent: true,
+      },
+    );
+    const prompt = mock.lastPrompt()?.input ?? "";
+    assert.match(prompt, /Newest topic detail/);
+    assert.match(prompt, /Earlier topic detail/);
+    assert.doesNotMatch(prompt, /Oldest topic detail/);
+    assert.match(mock.replies.at(-1) ?? "", /Mock provider test output/);
+    assert.match(mock.replies.at(-1) ?? "", /2 message\(s\)/);
+    assert.deepEqual(
+      database
+        .prepare("SELECT value_json FROM guild_settings WHERE guild_id = ?")
+        .all(guildId)
+        .map((row) => row["value_json"]),
+      [
+        JSON.stringify({
+          enabled: true,
+          channelIds: [channelId],
+          maxAgeDays: 1,
+          maxMessages: 2,
+          provider: "mock",
+        }),
+      ],
+    );
+    assert.equal(mock.generationCalls(), 1);
   } finally {
     database.close();
   }

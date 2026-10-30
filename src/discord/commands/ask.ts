@@ -2,11 +2,14 @@ import {
   ChannelType,
   escapeMarkdown,
   MessageFlags,
+  PermissionFlagsBits,
   SlashCommandBuilder,
   type ChatInputCommandInteraction,
   type GuildBasedChannel,
   type NewsChannel,
   type TextChannel,
+  type GuildTextBasedChannel,
+  type ThreadChannel,
 } from "discord.js";
 import type { GuildMember } from "discord.js";
 import {
@@ -15,6 +18,10 @@ import {
   AiUsageLimitError,
 } from "../../ai/errors.js";
 import type { AiPrompt, AiProvider } from "../../ai/types.js";
+import {
+  buildMessageQuestionEvidence,
+  type MessageProviderId,
+} from "../../features/message-retrieval.js";
 import {
   buildConfigurationQuestionEvidence,
   hasCurrentViewAccess,
@@ -34,6 +41,11 @@ import {
 } from "../../storage/snapshots.js";
 import type { DatabaseSync } from "node:sqlite";
 import type { SavedConfigurationSnapshot } from "../../storage/snapshots.js";
+import { getMessageRetrievalSettings } from "../../storage/message-retrieval.js";
+import {
+  unavailableGatewayCapabilityMessage,
+  type GatewayCapabilities,
+} from "../gateway-capabilities.js";
 
 export const askCommand = new SlashCommandBuilder()
   .setName("ask")
@@ -52,12 +64,25 @@ export const askCommand = new SlashCommandBuilder()
     option
       .setName("channel")
       .setDescription("Optional channel for configuration or access questions.")
-      .addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement),
+      .addChannelTypes(
+        ChannelType.GuildText,
+        ChannelType.GuildAnnouncement,
+        ChannelType.PublicThread,
+        ChannelType.PrivateThread,
+        ChannelType.AnnouncementThread,
+      ),
   )
   .addUserOption((option) =>
     option
       .setName("member")
       .setDescription("Optional server member for a roles or access question."),
+  )
+  .addBooleanOption((option) =>
+    option
+      .setName("include_messages")
+      .setDescription(
+        "Include bounded recent messages from the selected channel.",
+      ),
   );
 
 export type AskCommandLimits = Readonly<{
@@ -72,6 +97,13 @@ export async function executeAskCommand(
   database: DatabaseSync,
   provider: AiProvider,
   limits: AskCommandLimits,
+  providers: ReadonlyMap<string, AiProvider> = new Map([
+    [provider.id, provider],
+  ]),
+  gatewayCapabilities: GatewayCapabilities = {
+    guildMembers: true,
+    messageContent: false,
+  },
 ): Promise<void> {
   const guild = interaction.guild;
   const guildId = interaction.guildId;
@@ -94,6 +126,8 @@ export async function executeAskCommand(
 
   const selectedChannel = interaction.options.getChannel("channel");
   const selectedUser = interaction.options.getUser("member");
+  const includeMessages =
+    interaction.options.getBoolean?.("include_messages") ?? false;
   if (!selectedChannel && !selectedUser) {
     await interaction.reply({
       content: "Select a channel, a member, or both to scope the question.",
@@ -101,7 +135,7 @@ export async function executeAskCommand(
     });
     return;
   }
-  if (isMemberActivityQuestion(question)) {
+  if (isMemberActivityQuestion(question) && !includeMessages) {
     await interaction.reply({
       content:
         "Message activity is unavailable because this bot has not collected messages. It will not infer a member's activity from roles or server configuration.",
@@ -109,13 +143,63 @@ export async function executeAskCommand(
     });
     return;
   }
-  if (selectedChannel && !isSupportedTextChannelOption(selectedChannel)) {
+  if (
+    selectedChannel &&
+    !(includeMessages
+      ? isSupportedMessageChannelOption(selectedChannel)
+      : isSupportedTextChannelOption(selectedChannel))
+  ) {
     await interaction.reply({
-      content: "Choose a text or announcement channel.",
+      content: includeMessages
+        ? "Choose a text, announcement, or thread channel."
+        : "Choose a text or announcement channel.",
       flags: MessageFlags.Ephemeral,
     });
     return;
   }
+  if (includeMessages && !selectedChannel) {
+    await interaction.reply({
+      content: "Select one channel or thread when including message evidence.",
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+  const defaultProviderId: MessageProviderId =
+    provider.id === "openai" ? "openai" : "mock";
+  const messageSettings = includeMessages
+    ? getMessageRetrievalSettings(database, guildId, defaultProviderId)
+    : null;
+  if (includeMessages && (!messageSettings?.enabled || !selectedChannel)) {
+    await interaction.reply({
+      content:
+        "Message retrieval is disabled for this server. A server administrator must enable it and allow the selected channel with /messages config enable.",
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+  if (includeMessages && !gatewayCapabilities.messageContent) {
+    await interaction.reply({
+      content:
+        unavailableGatewayCapabilityMessage(
+          "messageContent",
+          gatewayCapabilities,
+        ) ?? "Message content access is not enabled.",
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+  const selectedProvider = includeMessages
+    ? providers.get(messageSettings?.provider ?? defaultProviderId)
+    : provider;
+  if (!selectedProvider) {
+    await interaction.reply({
+      content:
+        "The server's selected AI provider is not configured locally. Ask a server administrator to choose an available provider.",
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+  let providerForGeneration = selectedProvider;
 
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
@@ -123,7 +207,9 @@ export async function executeAskCommand(
   let channel: GuildBasedChannel | null = null;
   let targetMember: GuildMember | null = null;
   try {
-    await guild.roles.fetch(undefined, { force: true });
+    if (!includeMessages) {
+      await guild.roles.fetch(undefined, { force: true });
+    }
     [requester, channel] = await Promise.all([
       guild.members.fetch({ user: interaction.user.id, force: true }),
       selectedChannel
@@ -144,7 +230,9 @@ export async function executeAskCommand(
     }
     if (selectedChannel && (code === 10_003 || code === 50_001)) {
       await interaction.editReply(
-        "The bot cannot read that channel's configuration. Grant the bot View Channel access there, then capture a new /server inspect snapshot.",
+        includeMessages
+          ? "The bot cannot access that channel right now. Grant it View Channel and Read Message History access, then confirm private-thread membership if applicable."
+          : "The bot cannot read that channel's configuration. Grant the bot View Channel access there, then capture a new /server inspect snapshot.",
       );
       return;
     }
@@ -165,7 +253,119 @@ export async function executeAskCommand(
 
   let prompt: AiPrompt;
   let formatResponse: (answer: string) => string;
-  if (selectedChannel) {
+  if (includeMessages) {
+    if (
+      !channel ||
+      !isSupportedMessageChannel(channel) ||
+      channel.guildId !== guildId ||
+      !messageSettings ||
+      !selectedChannel
+    ) {
+      await interaction.editReply(
+        "That channel or thread is not available for message analysis in this server.",
+      );
+      return;
+    }
+    const configuredChannelId = isThreadType(channel.type)
+      ? channel.parentId
+      : channel.id;
+    if (!messageSettings.channelIds.includes(configuredChannelId ?? "")) {
+      await interaction.editReply(
+        "The selected channel is not enabled for message retrieval by a server administrator.",
+      );
+      return;
+    }
+    let botMember: GuildMember;
+    try {
+      botMember = await guild.members.fetchMe();
+    } catch {
+      await interaction.editReply(
+        "The bot's current channel access could not be verified. Try again later.",
+      );
+      return;
+    }
+    const accessError = await getMessageChannelAccessError(
+      channel,
+      requester,
+      botMember,
+      gatewayCapabilities,
+    );
+    if (accessError) {
+      await interaction.editReply(accessError);
+      return;
+    }
+
+    const currentSettings = getMessageRetrievalSettings(
+      database,
+      guildId,
+      defaultProviderId,
+    );
+    const currentConfiguredChannelId = isThreadType(channel.type)
+      ? channel.parentId
+      : channel.id;
+    if (
+      !currentSettings.enabled ||
+      !currentSettings.channelIds.includes(currentConfiguredChannelId ?? "")
+    ) {
+      await interaction.editReply(
+        "Message retrieval was disabled for this channel before the request could read its history.",
+      );
+      return;
+    }
+    const currentProvider = providers.get(currentSettings.provider);
+    if (!currentProvider) {
+      await interaction.editReply(
+        "The server's selected AI provider is not configured locally. Ask a server administrator to choose an available provider.",
+      );
+      return;
+    }
+    providerForGeneration = currentProvider;
+
+    let fetched;
+    try {
+      fetched = await channel.messages.fetch({
+        limit: currentSettings.maxMessages,
+      });
+    } catch {
+      await interaction.editReply(
+        "The selected message history could not be read. Recheck current channel and thread permissions, then try again.",
+      );
+      return;
+    }
+    const result = buildMessageQuestionEvidence({
+      question,
+      guildId,
+      channelId: channel.id,
+      channelName: channel.name,
+      messages: fetched
+        .filter((message) => !message.author.bot)
+        .filter(
+          (message) => !selectedUser || message.author.id === selectedUser.id,
+        )
+        .map((message) => ({
+          guildId: message.guildId ?? "",
+          channelId: message.channelId,
+          messageId: message.id,
+          authorId: message.author.id,
+          authorName: message.member?.displayName ?? message.author.username,
+          createdAt: message.createdAt.toISOString(),
+          content: message.content,
+        })),
+      maxAgeDays: currentSettings.maxAgeDays,
+      maxMessages: currentSettings.maxMessages,
+    });
+    if (!result.ok) {
+      await interaction.editReply(
+        result.reason === "no_recent_messages"
+          ? "No messages with readable text were found within the configured age and count limits."
+          : "The selected message evidence could not be validated safely.",
+      );
+      return;
+    }
+    prompt = result.evidence.prompt;
+    formatResponse = (answer) =>
+      formatMessageAnswer(answer, result.evidence, currentProvider.id);
+  } else if (selectedChannel) {
     if (
       !channel ||
       !isSupportedTextChannel(channel) ||
@@ -276,7 +476,7 @@ export async function executeAskCommand(
   try {
     const completion = await generateForGuild(
       database,
-      provider,
+      providerForGeneration,
       guildId,
       prompt,
       limits,
@@ -483,6 +683,121 @@ function formatMemberAnswer(
 
 function escapeUntrustedText(value: string): string {
   return escapeMarkdown(value).replace(/@(everyone|here)/gi, "@​$1");
+}
+
+function formatMessageAnswer(
+  answer: string,
+  evidence: Readonly<{
+    channelName: string;
+    channelId: string;
+    messageCount: number;
+    oldestMessageAt: string;
+    newestMessageAt: string;
+    retrievedAt: string;
+    maxAgeDays: number;
+    maxMessages: number;
+  }>,
+  providerId: string,
+): string {
+  const label =
+    providerId === "mock"
+      ? "**Mock provider test output; this is not an AI-generated factual answer.**"
+      : "**AI-generated answer from recent channel messages**";
+  const footer = [
+    "**Evidence**",
+    `Channel: ${escapeMarkdown(evidence.channelName)} (ID ${evidence.channelId})`,
+    `Retrieved <t:${Math.floor(Date.parse(evidence.retrievedAt) / 1_000)}:F>; ${evidence.messageCount} message(s) from <t:${Math.floor(Date.parse(evidence.oldestMessageAt) / 1_000)}:F> to <t:${Math.floor(Date.parse(evidence.newestMessageAt) / 1_000)}:F>.`,
+    `Configured bounds: at most ${evidence.maxMessages} message(s) from the previous ${evidence.maxAgeDays} day(s). Message text is fetched for this request and not stored.`,
+  ].join("\n");
+  const heading = `${label}\n\n`;
+  const footerBlock = `\n\n${footer}`;
+  const maximumAnswerLength = Math.max(
+    0,
+    1_900 - heading.length - footerBlock.length,
+  );
+  const safeAnswer = escapeUntrustedText(answer.trim());
+  const clippedAnswer =
+    safeAnswer.length > maximumAnswerLength
+      ? `${safeAnswer.slice(0, Math.max(0, maximumAnswerLength - 1)).trimEnd()}…`
+      : safeAnswer;
+  return `${heading}${clippedAnswer}${footerBlock}`;
+}
+
+async function getMessageChannelAccessError(
+  channel: GuildTextBasedChannel,
+  requester: GuildMember,
+  botMember: GuildMember,
+  capabilities: GatewayCapabilities,
+): Promise<string | null> {
+  const requesterPermissions = channel.permissionsFor(requester);
+  if (
+    !requesterPermissions?.has(PermissionFlagsBits.ViewChannel) ||
+    !requesterPermissions.has(PermissionFlagsBits.ReadMessageHistory)
+  ) {
+    return "You need current View Channel and Read Message History access to the selected channel or thread.";
+  }
+  const botPermissions = channel.permissionsFor(botMember);
+  if (
+    !botPermissions?.has(PermissionFlagsBits.ViewChannel) ||
+    !botPermissions.has(PermissionFlagsBits.ReadMessageHistory)
+  ) {
+    return "The bot needs current View Channel and Read Message History access to retrieve messages from that channel or thread.";
+  }
+
+  if (channel.type !== ChannelType.PrivateThread) return null;
+  const requesterCanManage = requesterPermissions.has(
+    PermissionFlagsBits.ManageThreads,
+  );
+  const botCanManage = botPermissions.has(PermissionFlagsBits.ManageThreads);
+  if (!requesterCanManage || !botCanManage) {
+    if (!capabilities.guildMembers) {
+      return (
+        unavailableGatewayCapabilityMessage("guildMembers", capabilities) ??
+        "The bot cannot verify private-thread membership."
+      );
+    }
+    const thread = channel as ThreadChannel;
+    try {
+      if (!requesterCanManage) {
+        await thread.members.fetch({ member: requester.id, force: true });
+      }
+      if (!botCanManage) {
+        await thread.members.fetch({ member: botMember.id, force: true });
+      }
+    } catch {
+      return "Current membership in the selected private thread could not be verified for both you and the bot.";
+    }
+  }
+  return null;
+}
+
+function isThreadType(type: ChannelType): boolean {
+  return (
+    type === ChannelType.PublicThread ||
+    type === ChannelType.PrivateThread ||
+    type === ChannelType.AnnouncementThread
+  );
+}
+
+function isSupportedMessageChannel(
+  channel: GuildBasedChannel | null,
+): channel is GuildTextBasedChannel {
+  if (!channel) return false;
+  return (
+    channel?.type === ChannelType.GuildText ||
+    channel?.type === ChannelType.GuildAnnouncement ||
+    isThreadType(channel.type)
+  );
+}
+
+function isSupportedMessageChannelOption(channel: {
+  type: ChannelType;
+}): boolean {
+  return (
+    channel.type === ChannelType.GuildText ||
+    channel.type === ChannelType.GuildAnnouncement ||
+    isThreadType(channel.type)
+  );
 }
 
 function isSupportedTextChannel(
