@@ -191,6 +191,34 @@ export const migrations: readonly Migration[] = [
       backfillPlanAuditEvents(database);
     },
   },
+  {
+    version: 7,
+    name: "create_ai_usage_accounting",
+    up(database) {
+      database.exec(`
+        CREATE TABLE ai_usage_daily (
+          guild_id TEXT NOT NULL,
+          bucket_date TEXT NOT NULL,
+          tokens_used INTEGER NOT NULL DEFAULT 0 CHECK (tokens_used >= 0),
+          tokens_reserved INTEGER NOT NULL DEFAULT 0 CHECK (tokens_reserved >= 0),
+          updated_at TEXT NOT NULL,
+          PRIMARY KEY (guild_id, bucket_date)
+        ) WITHOUT ROWID;
+
+        CREATE TABLE ai_usage_reservations (
+          reservation_id TEXT PRIMARY KEY,
+          guild_id TEXT NOT NULL,
+          bucket_date TEXT NOT NULL,
+          reserved_tokens INTEGER NOT NULL CHECK (reserved_tokens > 0),
+          expires_at TEXT NOT NULL,
+          FOREIGN KEY (guild_id, bucket_date)
+            REFERENCES ai_usage_daily(guild_id, bucket_date) ON DELETE CASCADE
+        );
+        CREATE INDEX ai_usage_reservations_expiry
+          ON ai_usage_reservations (expires_at);
+      `);
+    },
+  },
 ];
 
 type HistoricalPlanRow = Readonly<{

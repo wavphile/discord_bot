@@ -75,17 +75,17 @@ function createInput(
   };
 }
 
-test("migration 6 adds durable plan-job and plan-audit storage", () => {
+test("migration 7 adds plan-audit and AI usage storage", () => {
   const database = openDatabase(":memory:");
   try {
-    assert.equal(getSchemaVersion(database), 6);
+    assert.equal(getSchemaVersion(database), 7);
     assert.equal(
       database
         .prepare(
-          "SELECT COUNT(*) AS count FROM sqlite_master WHERE type = 'table' AND name IN ('change_plans', 'change_plan_items', 'plan_jobs', 'plan_job_items', 'plan_audit_events')",
+          "SELECT COUNT(*) AS count FROM sqlite_master WHERE type = 'table' AND name IN ('change_plans', 'change_plan_items', 'plan_jobs', 'plan_job_items', 'plan_audit_events', 'ai_usage_daily', 'ai_usage_reservations')",
         )
         .get()?.["count"],
-      5,
+      7,
     );
   } finally {
     database.close();
