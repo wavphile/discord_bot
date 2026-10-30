@@ -6,11 +6,13 @@ import {
   type BaseInteraction,
 } from "discord.js";
 import { env } from "./config/env.js";
+import { createAiProvider } from "./ai/index.js";
 import {
   authorizeInteraction,
   authorizePlanApprover,
 } from "./core/authorization.js";
 import { executeHealthCommand } from "./discord/commands/health.js";
+import { executeAskCommand } from "./discord/commands/ask.js";
 import { executePlanCommand } from "./discord/commands/plan.js";
 import { executePermissionsCommand } from "./discord/commands/permissions.js";
 import { executeServerCommand } from "./discord/commands/server.js";
@@ -22,6 +24,7 @@ import { logger } from "./observability/logger.js";
 import { getSchemaVersion, openDatabase } from "./storage/database.js";
 
 const client = new Client({ intents: [GatewayIntentBits.Guilds] });
+const aiProvider = createAiProvider(env);
 const database = openDatabase(env.DATABASE_PATH);
 const schemaVersion = getSchemaVersion(database);
 const authorizationPolicy = {
@@ -97,6 +100,13 @@ client.on(Events.InteractionCreate, async (interaction) => {
   try {
     if (interaction.commandName === "health") {
       await executeHealthCommand(interaction, schemaVersion);
+    } else if (interaction.commandName === "ask") {
+      await executeAskCommand(interaction, database, aiProvider, {
+        maxInputTokens: env.AI_MAX_INPUT_TOKENS,
+        maxOutputTokens: env.AI_MAX_OUTPUT_TOKENS,
+        dailyTokenBudgetPerGuild: env.AI_DAILY_TOKEN_BUDGET_PER_GUILD,
+        requestTimeoutMs: env.AI_REQUEST_TIMEOUT_MS,
+      });
     } else if (interaction.commandName === "plan") {
       await executePlanCommand(interaction, database, {
         requesterAuthorization: authorizationPolicy,

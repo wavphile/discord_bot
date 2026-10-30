@@ -1,10 +1,12 @@
 import { healthCommand } from "./health.js";
+import { askCommand } from "./ask.js";
 import { planCommand } from "./plan.js";
 import { permissionsCommand } from "./permissions.js";
 import { serverCommand } from "./server.js";
 
 export const commands = [
   healthCommand,
+  askCommand,
   permissionsCommand,
   serverCommand,
   planCommand,

@@ -120,7 +120,7 @@ M2-15 implementation adds schema v6 with a transactional, append-only audit log 
 | ID | Task | Acceptance criteria |
 | --- | --- | --- |
 | 16 | [x] [Implement provider interface](https://github.com/wavphile/discord_bot/issues/29) | Configurable endpoint, model, timeout, token budget, and per-server usage limits; one hosted provider works; mocked provider supports tests |
-| 17 | Answer configuration questions | `/ask` retrieves relevant authorized configuration and returns evidence with snapshot time; missing or stale data is disclosed |
+| 17 | [Answer configuration questions](https://github.com/wavphile/discord_bot/issues/31) | `/ask` retrieves relevant authorized configuration and returns evidence with snapshot time; missing or stale data is disclosed |
 | 18 | Convert AI suggestions into plans | Model output is schema validated, targets are resolved by application code, and all writes use M2 approval/execution; unsupported actions are rejected |
 | 19 | Harden AI boundaries | Test injected instructions, fabricated IDs, cross-server requests, excessive context, provider failure, and unauthorized settings access |
 

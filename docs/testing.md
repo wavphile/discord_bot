@@ -212,9 +212,18 @@ Every pull request and push to `main` runs the same local checks with `npm run c
 
 The workflow covers formatting, TypeScript type checking, permission-calculation unit tests, compilation, Compose configuration, and production image building. It also checks that the image contains no dotenv files. A pull request should state what can be tried, how to trigger it, the expected result, and any required setup or permissions.
 
-### AI provider configuration (infrastructure only)
+### Ask a configuration question
 
-The provider infrastructure currently defaults to `AI_PROVIDER=mock`, which produces deterministic local output and makes no network request. There is no user-facing `/ask` command in this milestone. To select the OpenAI provider for a later feature, set `AI_PROVIDER=openai`, `OPENAI_API_KEY`, and `OPENAI_MODEL`; `OPENAI_BASE_URL` defaults to `https://api.openai.com/v1`. Keep the key in the local `.env` file or the deployment secret store, never in Git or logs. The endpoint must use HTTPS; HTTP is accepted only for localhost during development. See [AI provider configuration](ai-providers.md) for limits and data handling.
+Capture a recent snapshot, then ask about a text or announcement channel that you can currently view:
+
+```text
+/server inspect
+/ask question:"Why can this member view this channel?" channel:#bots member:@TestMember
+```
+
+The command is allowlisted, guild-only, and replies ephemerally. It requires the requester to have current View Channel access. It uses only the selected channel's snapshot data plus the selected member's current role membership; it omits unrelated channel settings and other members' overwrites. Snapshots older than 24 hours, missing snapshots, missing channel data, or role definitions absent from the snapshot require a new `/server inspect`. The answer includes the snapshot ID and capture time, member-role read time, a limited-visibility notice, and a deterministic permission calculation. The model has no tools and cannot make server changes. Mock output is explicitly labeled as a test response.
+
+The default `AI_PROVIDER=mock` produces deterministic local output and makes no network request. To receive a model answer, set `AI_PROVIDER=openai` and `OPENAI_API_KEY` in the ignored `.env`; `OPENAI_BASE_URL` and `OPENAI_MODEL` are documented in [AI provider configuration](ai-providers.md). Keep the key out of Git, logs, Discord, and Codex. See [provider data handling](ai-providers.md) before sending server configuration to a hosted service.
 
 `AI_REQUEST_TIMEOUT_MS` bounds each provider request. `AI_MAX_INPUT_TOKENS` caps input after the provider's input-token count endpoint checks the same developer/user messages; `AI_MAX_OUTPUT_TOKENS` bounds generated tokens. The bot reserves the maximum input plus output budget for the request, then records actual input and output usage after a complete response. Reservations prevent concurrent requests from exceeding `AI_DAILY_TOKEN_BUDGET_PER_GUILD`; the daily bucket resets at 00:00 UTC for each guild. Timeouts, interrupted requests, invalid responses, and unexpected provider failures keep reservations until the lease expires because generation may have been charged; known configuration, rejected-request, and rate-limit errors release them. Daily aggregate usage is pruned after 90 days on a subsequent reservation. The ledger stores only guild/day token totals and temporary reservation metadata, never prompts or generated text.
 

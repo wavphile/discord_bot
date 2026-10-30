@@ -1,6 +1,6 @@
 # AI provider configuration
 
-This milestone adds provider and usage-accounting infrastructure. It does not yet expose an AI command in Discord, so setting up a hosted provider does not add a command to try. The default `AI_PROVIDER=mock` is deterministic and does not make network requests.
+The provider infrastructure powers the read-only `/ask` command. The default `AI_PROVIDER=mock` is deterministic and does not make network requests. It labels its output as a test response rather than pretending to answer from the selected evidence.
 
 ## Settings
 
@@ -25,4 +25,4 @@ Before generation, SQLite reserves the counted input plus the configured maximum
 
 `store:false` prevents this adapter from asking the Responses API to retain a response as application state. It is not a zero-retention guarantee for every category of provider data. OpenAI's current data-controls documentation says API content is not used to train models unless the customer opts in, and default abuse-monitoring logs may include prompts and responses for up to 30 days. Eligibility, configured retention controls, endpoint behavior, and legal exceptions can affect handling. Review the current [OpenAI data controls](https://developers.openai.com/api/docs/guides/your-data) and your organization's requirements before sending server data to a hosted provider.
 
-For endpoint behavior, see OpenAI's [text-generation guide](https://developers.openai.com/api/docs/guides/text) and [token-counting guide](https://developers.openai.com/api/docs/guides/token-counting). Keep `AI_PROVIDER=mock` until a later feature is ready to call the provider and its data flow has been reviewed.
+For endpoint behavior, see OpenAI's [text-generation guide](https://developers.openai.com/api/docs/guides/text) and [token-counting guide](https://developers.openai.com/api/docs/guides/token-counting). The bot currently defaults to `AI_PROVIDER=mock`; configure a hosted provider only after reviewing this data flow.
