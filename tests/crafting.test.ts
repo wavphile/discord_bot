@@ -14,7 +14,11 @@ import {
 } from "../src/storage/crafting.js";
 import { openDatabase } from "../src/storage/database.js";
 import { registerCraftingMessageEvents } from "../src/discord/crafting-messages.js";
-import { formatCrafterReply } from "../src/discord/commands/crafting.js";
+import {
+  canChangeCrafterListing,
+  craftingCommand,
+  formatCrafterReply,
+} from "../src/discord/commands/crafting.js";
 
 const guildId = "123456789012345678";
 const recipeUrl = "https://www.wowhead.com/wotlk/item=12345/arcane-barrier";
@@ -128,6 +132,44 @@ test("crafter replies escape page text and allow only registered-user mentions",
     parse: [],
     users: ["444444444444444444"],
   });
+});
+
+test("members can manage their own listings while the configured role manages others", () => {
+  const actorId = "444444444444444444";
+  const otherId = "555555555555555555";
+  const roleId = "222222222222222222";
+  const member = { roles: [roleId] } as unknown as Parameters<
+    typeof canChangeCrafterListing
+  >[0];
+
+  assert.equal(canChangeCrafterListing(member, roleId, actorId, actorId), true);
+  assert.equal(canChangeCrafterListing(member, roleId, actorId, otherId), true);
+  const memberWithoutRole = { roles: [] } as unknown as Parameters<
+    typeof canChangeCrafterListing
+  >[0];
+  assert.equal(
+    canChangeCrafterListing(memberWithoutRole, roleId, actorId, actorId),
+    true,
+  );
+  assert.equal(
+    canChangeCrafterListing(memberWithoutRole, roleId, actorId, otherId),
+    false,
+  );
+});
+
+test("the crafter argument is optional for self-service add and remove", () => {
+  const subcommands = craftingCommand.toJSON().options as unknown as Array<{
+    name: string;
+    options?: Array<{ name: string; required?: boolean }>;
+  }>;
+  for (const name of ["add", "remove"]) {
+    const subcommand = subcommands.find((option) => option.name === name);
+    const crafter = subcommand?.options?.find(
+      (option) => option.name === "crafter",
+    );
+    assert.ok(crafter);
+    assert.equal(crafter.required, false);
+  }
 });
 
 test("the crafter registry stores setup, recipe pages, and unique Discord users", () => {
