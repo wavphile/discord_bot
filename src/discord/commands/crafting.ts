@@ -71,7 +71,7 @@ export const craftingCommand = new SlashCommandBuilder()
   .addSubcommand((subcommand) =>
     subcommand
       .setName("add")
-      .setDescription("Register a guild member as a recipe crafter.")
+      .setDescription("Register yourself or an authorized guild member.")
       .addStringOption((option) =>
         option
           .setName("recipe")
@@ -82,8 +82,7 @@ export const craftingCommand = new SlashCommandBuilder()
       .addUserOption((option) =>
         option
           .setName("crafter")
-          .setDescription("Guild member who can craft this recipe.")
-          .setRequired(true),
+          .setDescription("Other guild member (requires the crafter role)."),
       ),
   )
   .addSubcommand((subcommand) =>
@@ -100,8 +99,7 @@ export const craftingCommand = new SlashCommandBuilder()
       .addUserOption((option) =>
         option
           .setName("crafter")
-          .setDescription("Guild member to remove from this recipe.")
-          .setRequired(true),
+          .setDescription("Other guild member (requires the crafter role)."),
       ),
   );
 
@@ -192,10 +190,18 @@ export async function executeCraftingCommand(
     );
     return;
   }
-  if (!hasRole(interaction.member, settings.crafterRoleId)) {
+  const crafter = interaction.options.getUser("crafter") ?? interaction.user;
+  if (
+    !canChangeCrafterListing(
+      interaction.member,
+      settings.crafterRoleId,
+      interaction.user.id,
+      crafter.id,
+    )
+  ) {
     await privateReply(
       interaction,
-      `You need the <@&${settings.crafterRoleId}> role to change crafter listings.`,
+      `You can register or remove yourself. To manage another member, you need the <@&${settings.crafterRoleId}> role.`,
     );
     return;
   }
@@ -219,7 +225,6 @@ export async function executeCraftingCommand(
     return;
   }
 
-  const crafter = interaction.options.getUser("crafter", true);
   try {
     await guild.members.fetch({ user: crafter.id, force: true });
   } catch {
@@ -254,10 +259,13 @@ export async function executeCraftingCommand(
   );
 }
 
-function hasRole(
+export function canChangeCrafterListing(
   member: ChatInputCommandInteraction["member"],
   roleId: string,
+  actorId: string,
+  targetId: string,
 ): boolean {
+  if (actorId === targetId) return true;
   if (!member) return false;
   if ("roles" in member && Array.isArray(member.roles)) {
     return member.roles.includes(roleId);
