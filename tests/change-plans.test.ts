@@ -78,7 +78,7 @@ function createInput(
 test("current schema keeps plan-audit and AI usage storage", () => {
   const database = openDatabase(":memory:");
   try {
-    assert.equal(getSchemaVersion(database), 8);
+    assert.equal(getSchemaVersion(database), 9);
     assert.equal(
       database
         .prepare(

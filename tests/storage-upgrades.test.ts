@@ -69,7 +69,7 @@ function addFutureMigration(databasePath: string): void {
       .run("preserve future data");
     database
       .prepare(
-        "INSERT INTO schema_migrations (version, name, applied_at) VALUES (9, ?, ?)",
+        "INSERT INTO schema_migrations (version, name, applied_at) VALUES (10, ?, ?)",
       )
       .run("future_schema_for_rollback_test", "2026-01-02T00:00:00.000Z");
   } finally {
@@ -101,7 +101,7 @@ test(
 
     const upgraded = openDatabase(databasePath);
     try {
-      assert.equal(getSchemaVersion(upgraded), 8);
+      assert.equal(getSchemaVersion(upgraded), 9);
       assert.equal(
         (
           upgraded
@@ -178,7 +178,7 @@ test(
             .prepare("SELECT MAX(version) AS version FROM schema_migrations")
             .get() as { version: number }
         ).version,
-        9,
+        10,
       );
     } finally {
       unchanged.close();

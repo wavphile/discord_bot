@@ -19,6 +19,8 @@ For the in-repository read-only command-module contract and a complete example, 
 
 `/ask` accepts a channel, a member, or both. A member-only question uses a fresh role and permission read without requiring a saved channel snapshot. Recent-message questions require an explicit server-admin opt-in for each source channel, Message Content Intent, current requester and bot history access, and `/ask include_messages:true`. `/summarize channel:#bots` uses the same opt-in, limits, and access checks, then returns a private summary with validated links to its supporting messages. Retrieval is limited to 1–7 days and 1–50 messages per request; message text is fetched on demand and is not stored by the bot. With the default mock provider, it is not sent to a hosted service and summaries are labeled as test output. Review [provider data handling](docs/ai-providers.md) before selecting a hosted provider, and follow [the testing guide](docs/testing.md) for setup and permission details.
 
+The optional [guild crafter registry](docs/crafting-registry.md) lets members look up registered recipe crafters with normal text questions in one configured channel. It requires Message Content Intent and an admin-selected Wowhead game database and crafter role.
+
 Build the production JavaScript with `npm run build`; run it with `npm start`.
 
 ## Docker Compose

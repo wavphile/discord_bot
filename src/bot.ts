@@ -12,8 +12,10 @@ import { executePermissionsCommand } from "./discord/commands/permissions.js";
 import { executeServerCommand } from "./discord/commands/server.js";
 import { executeMessagesCommand } from "./discord/commands/messages.js";
 import { executeSummarizeCommand } from "./discord/commands/summarize.js";
+import { executeCraftingCommand } from "./discord/commands/crafting.js";
 import { executeFeatureModule } from "./discord/modules/index.js";
 import { registerMessageRetentionEvents } from "./discord/message-retention.js";
+import { registerCraftingMessageEvents } from "./discord/crafting-messages.js";
 import {
   createDiscordPlanJobAdapter,
   DurablePlanJobRunner,
@@ -59,6 +61,12 @@ const stopMessageRetentionEvents = registerMessageRetentionEvents(
   database,
   gatewayCapabilities,
 );
+const stopCraftingMessageEvents = registerCraftingMessageEvents(
+  client,
+  database,
+  gatewayCapabilities.messageContent,
+  env.DISCORD_DEV_GUILD_ID,
+);
 let shuttingDown = false;
 const readinessServer = createReadinessServer({
   discordReady: () => !shuttingDown && client.isReady(),
@@ -94,6 +102,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
     roleIds: interactionRoleIds(interaction),
   };
   const decision = authorizeInteraction(request, authorizationPolicy);
+  const craftingCommand =
+    interaction.isChatInputCommand() &&
+    interaction.commandName === "crafting" &&
+    interaction.guildId === env.DISCORD_DEV_GUILD_ID;
   const approvalCommand =
     interaction.isChatInputCommand() &&
     interaction.commandName === "plan" &&
@@ -104,7 +116,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     ? authorizePlanApprover(request, approvalAuthorizationPolicy)
     : { allowed: false as const };
 
-  if (!decision.allowed && !approverDecision.allowed) {
+  if (!decision.allowed && !approverDecision.allowed && !craftingCommand) {
     logger.warn("authorization.interaction.denied", {
       ...(interaction.guildId ? { guildId: interaction.guildId } : {}),
       userId: interaction.user.id,
@@ -180,6 +192,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
         },
         gatewayCapabilities,
       );
+    } else if (interaction.commandName === "crafting") {
+      await executeCraftingCommand(interaction, database);
     } else {
       await executeFeatureModule(interaction);
     }
@@ -233,6 +247,7 @@ async function shutdown(signal: "SIGINT" | "SIGTERM"): Promise<void> {
   logger.info("process.shutdown", { signal });
   await planJobRunner.stop();
   stopMessageRetentionEvents();
+  stopCraftingMessageEvents();
   client.destroy();
   try {
     await readinessServer.close();
