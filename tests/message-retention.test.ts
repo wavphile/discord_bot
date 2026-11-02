@@ -73,10 +73,10 @@ function retainedRows(database: ReturnType<typeof openDatabase>) {
   }>;
 }
 
-test("schema v8 creates an empty retention store and settings default off", () => {
+test("schema v9 keeps message retention disabled by default", () => {
   const database = openDatabase(":memory:");
   try {
-    assert.equal(getSchemaVersion(database), 8);
+    assert.equal(getSchemaVersion(database), 9);
     assert.deepEqual(getMessageRetentionSettings(database, guildId), {
       channels: [],
     });
@@ -484,7 +484,8 @@ test("Discord message events capture, edit, delete, and bulk-delete rows without
   const database = openDatabase(":memory:");
   const client = new EventEmitter() as unknown as Client;
   let databaseClosed = false;
-  enableMessageRetention(database, guildId, channelId, 2, now);
+  const eventTime = new Date();
+  enableMessageRetention(database, guildId, channelId, 2, eventTime);
   const stop = registerMessageRetentionEvents(client, database, {
     guildMembers: false,
     messageContent: true,
@@ -626,7 +627,7 @@ function eventMessage(index: number, content: string): Message {
     author: { bot: false },
     system: false,
     webhookId: null,
-    createdAt: now,
+    createdAt: new Date(),
     content,
   } as unknown as Message;
 }

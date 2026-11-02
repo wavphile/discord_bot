@@ -243,6 +243,44 @@ export const migrations: readonly Migration[] = [
       `);
     },
   },
+  {
+    version: 9,
+    name: "create_crafter_registry",
+    up(database) {
+      database.exec(`
+        CREATE TABLE crafting_settings (
+          guild_id TEXT PRIMARY KEY,
+          game_version TEXT NOT NULL,
+          crafter_role_id TEXT NOT NULL,
+          query_channel_id TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        ) WITHOUT ROWID;
+
+        CREATE TABLE crafting_recipes (
+          recipe_id TEXT PRIMARY KEY,
+          guild_id TEXT NOT NULL,
+          game_version TEXT NOT NULL,
+          wowhead_entity_type TEXT NOT NULL CHECK (wowhead_entity_type IN ('item', 'recipe', 'spell')),
+          wowhead_entity_id TEXT NOT NULL,
+          recipe_name TEXT NOT NULL CHECK (length(recipe_name) BETWEEN 1 AND 200),
+          wowhead_url TEXT NOT NULL,
+          created_by TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          UNIQUE (guild_id, game_version, wowhead_entity_type, wowhead_entity_id)
+        );
+        CREATE INDEX crafting_recipes_guild_name
+          ON crafting_recipes (guild_id, game_version, recipe_name COLLATE NOCASE);
+
+        CREATE TABLE crafting_crafters (
+          recipe_id TEXT NOT NULL REFERENCES crafting_recipes(recipe_id) ON DELETE CASCADE,
+          user_id TEXT NOT NULL,
+          added_by TEXT NOT NULL,
+          added_at TEXT NOT NULL,
+          PRIMARY KEY (recipe_id, user_id)
+        ) WITHOUT ROWID;
+      `);
+    },
+  },
 ];
 
 type HistoricalPlanRow = Readonly<{

@@ -58,6 +58,10 @@ test("Discord slash-command schemas place required options before optional optio
   }
 });
 
+test("the crafting registry command is included in the deployable command list", () => {
+  assert.ok(commands.some((command) => command.name === "crafting"));
+});
+
 test("messages provider choices include only locally configured hosted providers", () => {
   const commandWithAnthropic = createCommands(["mock", "anthropic"]).find(
     (entry) => entry.name === "messages",

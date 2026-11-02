@@ -73,7 +73,7 @@ function addFutureMigration() {
       .run("preserve future data");
     database
       .prepare(
-        "INSERT INTO schema_migrations (version, name, applied_at) VALUES (9, ?, ?)",
+        "INSERT INTO schema_migrations (version, name, applied_at) VALUES (10, ?, ?)",
       )
       .run("future_schema_for_rollback_test", "2026-01-02T00:00:00.000Z");
   } finally {

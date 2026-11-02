@@ -5,6 +5,7 @@ import { permissionsCommand } from "./permissions.js";
 import { serverCommand } from "./server.js";
 import { createMessagesCommand } from "./messages.js";
 import { summarizeCommand } from "./summarize.js";
+import { craftingCommand } from "./crafting.js";
 import { featureModuleCommands } from "../modules/index.js";
 import type { MessageProviderId } from "../../features/message-retrieval.js";
 
@@ -23,6 +24,7 @@ export function createCommands(
     createMessagesCommand(configuredMessageProviders),
     summarizeCommand,
     planCommand,
+    craftingCommand,
     ...featureModuleCommands,
   ];
 }

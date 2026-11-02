@@ -48,4 +48,4 @@ Use the same data volume throughout the procedure. Do not run two releases again
 
 ## Migration verification
 
-The automated upgrade rehearsal starts with schema v7 and representative AI usage data, opens it with the current version, and confirms schema v8 and the original data remain. The rollback rehearsal takes a v8 backup, simulates a future v9 schema, restores the matching v8 backup with v8 code, and checks that both the restored v8 data and the preserved v9 copy remain intact. An older-code test confirms that v9 is refused without losing its future data.
+The automated upgrade rehearsal starts with schema v7 and representative AI usage data, opens it with the current version, and confirms schema v9 and the original data remain. The rollback rehearsal takes a v9 backup, simulates a future v10 schema, restores the matching v9 backup with v9 code, and checks that both the restored v9 data and the preserved v10 copy remain intact. An older-code test confirms that v10 is refused without losing its future data.
