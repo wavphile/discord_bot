@@ -51,6 +51,13 @@ test("member and message capabilities opt in only to their respective intents", 
   );
 });
 
+test("voice playback requests the Guild Voice States intent", () => {
+  assert.deepEqual(createGatewayIntents({ ...disabled, voiceStates: true }), [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildVoiceStates,
+  ]);
+});
+
 test("unavailable capability explanations give the exact setting and portal path", () => {
   const members = unavailableGatewayCapabilityMessage("guildMembers", disabled);
   const content = unavailableGatewayCapabilityMessage(

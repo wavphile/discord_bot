@@ -21,6 +21,8 @@ For the in-repository read-only command-module contract and a complete example, 
 
 The optional [guild crafter registry](docs/crafting-registry.md) lets members look up registered recipe crafters with normal text questions in one configured channel. It requires Message Content Intent and an admin-selected Wowhead game database and crafter role.
 
+The `/music` command lets any server member queue a direct YouTube video URL with `/music play`, inspect the queue, skip, stop, or make the bot leave voice. The bot joins the requester's voice channel and needs Connect and Speak there. Server managers can set, show, or clear the music update channel with `/music channel set`, `/music channel show`, and `/music channel clear`; the bot needs View Channel and Send Messages in the selected channel. Playlists, searches, live streams, and videos longer than four hours are not supported. The music queue is held in memory and clears when the bot restarts.
+
 Build the production JavaScript with `npm run build`; run it with `npm start`.
 
 ## Docker Compose

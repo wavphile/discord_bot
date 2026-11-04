@@ -13,6 +13,10 @@ import { executeServerCommand } from "./discord/commands/server.js";
 import { executeMessagesCommand } from "./discord/commands/messages.js";
 import { executeSummarizeCommand } from "./discord/commands/summarize.js";
 import { executeCraftingCommand } from "./discord/commands/crafting.js";
+import {
+  executeMusicCommand,
+  stopMusicPlayback,
+} from "./discord/commands/music.js";
 import { executeFeatureModule } from "./discord/modules/index.js";
 import { registerMessageRetentionEvents } from "./discord/message-retention.js";
 import { registerCraftingMessageEvents } from "./discord/crafting-messages.js";
@@ -31,6 +35,7 @@ import {
 const gatewayCapabilities = {
   guildMembers: env.DISCORD_ENABLE_GUILD_MEMBERS_INTENT,
   messageContent: env.DISCORD_ENABLE_MESSAGE_CONTENT_INTENT,
+  voiceStates: true,
 };
 const client = new Client({
   intents: createGatewayIntents(gatewayCapabilities),
@@ -106,6 +111,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
     interaction.isChatInputCommand() &&
     interaction.commandName === "crafting" &&
     interaction.guildId === env.DISCORD_DEV_GUILD_ID;
+  const musicCommand =
+    interaction.isChatInputCommand() && interaction.commandName === "music";
   const approvalCommand =
     interaction.isChatInputCommand() &&
     interaction.commandName === "plan" &&
@@ -116,7 +123,12 @@ client.on(Events.InteractionCreate, async (interaction) => {
     ? authorizePlanApprover(request, approvalAuthorizationPolicy)
     : { allowed: false as const };
 
-  if (!decision.allowed && !approverDecision.allowed && !craftingCommand) {
+  if (
+    !decision.allowed &&
+    !approverDecision.allowed &&
+    !craftingCommand &&
+    !musicCommand
+  ) {
     logger.warn("authorization.interaction.denied", {
       ...(interaction.guildId ? { guildId: interaction.guildId } : {}),
       userId: interaction.user.id,
@@ -194,6 +206,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
       );
     } else if (interaction.commandName === "crafting") {
       await executeCraftingCommand(interaction, database);
+    } else if (interaction.commandName === "music") {
+      await executeMusicCommand(interaction, client, database);
     } else {
       await executeFeatureModule(interaction);
     }
@@ -246,6 +260,7 @@ async function shutdown(signal: "SIGINT" | "SIGTERM"): Promise<void> {
   shuttingDown = true;
   logger.info("process.shutdown", { signal });
   await planJobRunner.stop();
+  stopMusicPlayback();
   stopMessageRetentionEvents();
   stopCraftingMessageEvents();
   client.destroy();

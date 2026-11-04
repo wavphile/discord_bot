@@ -21,8 +21,11 @@
     "format:check": "prettier --check ."
   },
   "dependencies": {
+    "@discordjs/voice": "^0.19.2",
     "discord.js": "^14.22.1",
     "dotenv": "^16.6.1",
+    "opusscript": "^0.0.8",
+    "play-dl": "^1.9.7",
     "zod": "^4.1.12"
   },
   "devDependencies": {
