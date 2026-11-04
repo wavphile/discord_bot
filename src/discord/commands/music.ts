@@ -37,6 +37,7 @@ type GuildQueue = {
   textChannelId: string;
   starting: boolean;
   audioProcess?: ChildProcessByStdio<null, Readable, Readable>;
+  idleDisconnectTimer?: NodeJS.Timeout;
   client: Client;
   database: DatabaseSync;
 };
@@ -44,9 +45,11 @@ type GuildQueue = {
 const queues = new Map<string, GuildQueue>();
 const responseChannelSetting = "music.response_channel";
 const maximumQueueSize = 50;
+const idleDisconnectMs = 5 * 60 * 1000;
 
 export function stopMusicPlayback(): void {
   for (const queue of queues.values()) {
+    clearIdleDisconnect(queue);
     queue.tracks.length = 0;
     queue.audioProcess?.kill();
     queue.player.stop(true);
@@ -217,11 +220,13 @@ export async function executeMusicCommand(
       });
       return;
     }
+    if (queue) clearIdleDisconnect(queue);
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     let video: YouTubeVideoInfo;
     try {
       video = await getYouTubeVideoInfo(url);
     } catch (error) {
+      if (queue) scheduleIdleDisconnect(guildId, queue);
       await interaction.editReply(
         error instanceof Error
           ? error.message
@@ -230,12 +235,14 @@ export async function executeMusicCommand(
       return;
     }
     if (video.isLive || video.duration <= 0 || video.duration > 14_400) {
+      if (queue) scheduleIdleDisconnect(guildId, queue);
       await interaction.editReply(
         "This video is live, unavailable, or longer than the 4-hour limit.",
       );
       return;
     }
     if (queue && queue.tracks.length >= maximumQueueSize) {
+      scheduleIdleDisconnect(guildId, queue);
       await interaction.editReply(
         `The queue is full (maximum ${maximumQueueSize} videos).`,
       );
@@ -259,6 +266,7 @@ export async function executeMusicCommand(
       guildQueue.connection &&
       guildQueue.connection.joinConfig.channelId !== voiceChannel.id
     ) {
+      if (queue) scheduleIdleDisconnect(guildId, queue);
       await interaction.editReply(
         "The bot is already playing in another voice channel.",
       );
@@ -375,6 +383,7 @@ export async function executeMusicCommand(
   delete queue.audioProcess;
   queue.player.stop(true);
   if (subcommand === "leave") {
+    clearIdleDisconnect(queue);
     queue.connection.destroy();
     queues.delete(guildId);
   }
@@ -409,7 +418,10 @@ function createQueue(
   player.on(AudioPlayerStatus.Idle, () => {
     const queue = queues.get(guildId);
     if (queue) delete queue.current;
-    if (queue && !queue.starting) void startNext(guildId);
+    if (queue && !queue.starting) {
+      if (queue.tracks.length > 0) void startNext(guildId);
+      else scheduleIdleDisconnect(guildId, queue);
+    }
   });
   player.on("error", (error) => {
     const queue = queues.get(guildId);
@@ -436,6 +448,7 @@ async function startNext(guildId: string): Promise<void> {
   const queue = queues.get(guildId);
   const track = queue?.tracks.shift();
   if (!queue || !track || queue.starting) return;
+  clearIdleDisconnect(queue);
   queue.starting = true;
   queue.current = track;
   try {
@@ -507,8 +520,47 @@ async function startNext(guildId: string): Promise<void> {
       queue.tracks.length > 0
     ) {
       void startNext(guildId);
+    } else if (
+      queue.player.state.status === AudioPlayerStatus.Idle &&
+      queue.tracks.length === 0
+    ) {
+      scheduleIdleDisconnect(guildId, queue);
     }
   }
+}
+
+function clearIdleDisconnect(queue: GuildQueue): void {
+  if (queue.idleDisconnectTimer) clearTimeout(queue.idleDisconnectTimer);
+  delete queue.idleDisconnectTimer;
+}
+
+function scheduleIdleDisconnect(guildId: string, queue: GuildQueue): void {
+  clearIdleDisconnect(queue);
+  if (
+    queues.get(guildId) !== queue ||
+    queue.starting ||
+    queue.current ||
+    queue.tracks.length > 0 ||
+    queue.player.state.status !== AudioPlayerStatus.Idle
+  ) {
+    return;
+  }
+
+  queue.idleDisconnectTimer = setTimeout(() => {
+    delete queue.idleDisconnectTimer;
+    if (
+      queues.get(guildId) !== queue ||
+      queue.starting ||
+      queue.current ||
+      queue.tracks.length > 0 ||
+      queue.player.state.status !== AudioPlayerStatus.Idle
+    ) {
+      return;
+    }
+    queue.connection?.destroy();
+    queues.delete(guildId);
+  }, idleDisconnectMs);
+  queue.idleDisconnectTimer.unref();
 }
 
 type YouTubeVideoInfo = Readonly<{
