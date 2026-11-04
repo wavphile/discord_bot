@@ -62,6 +62,10 @@ test("the crafting registry command is included in the deployable command list",
   assert.ok(commands.some((command) => command.name === "crafting"));
 });
 
+test("the music command is included in the deployable command list", () => {
+  assert.ok(commands.some((command) => command.name === "music"));
+});
+
 test("messages provider choices include only locally configured hosted providers", () => {
   const commandWithAnthropic = createCommands(["mock", "anthropic"]).find(
     (entry) => entry.name === "messages",

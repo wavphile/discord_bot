@@ -104,6 +104,15 @@ if (-not $nodeVersionMatch.Success -or [int]$nodeVersionMatch.Groups["major"].Va
     throw "This PR requires Node.js 24.15 or newer in the 24.x line; found $nodeVersionOutput."
 }
 
+$ytDlpCommand = Get-Command yt-dlp -ErrorAction SilentlyContinue
+if (-not $ytDlpCommand) {
+    throw 'Install yt-dlp with its default Python extras and ensure yt-dlp plus Node.js are on PATH before testing YouTube music.'
+}
+$ytDlpVersion = (& $ytDlpCommand.Source --version).Trim()
+if ($LASTEXITCODE -ne 0) {
+    throw "yt-dlp could not be started from $($ytDlpCommand.Source)."
+}
+
 $envPath = Join-Path $script:RepoRoot ".env"
 if (-not (Test-Path -LiteralPath $envPath)) {
     Copy-Item -LiteralPath (Join-Path $script:RepoRoot ".env.example") -Destination $envPath
@@ -179,6 +188,7 @@ Write-Host "Plan approver roles:        $($approverRoleIds.Count)"
 Write-Host "Server Members intent:      $guildMembersIntent"
 Write-Host "Message Content intent:     $messageContentIntent"
 Write-Host "Database path:              $databasePath"
+Write-Host "yt-dlp version:             $ytDlpVersion"
 Write-Host "Confirm these are your development app, private test server, and test database."
 
 $npmCommand = Get-Command npm.cmd -ErrorAction SilentlyContinue

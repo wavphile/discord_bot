@@ -6,6 +6,8 @@ A self-hosted Discord bot for server configuration inspection, permission explan
 
 Requirements: Node.js 24.15 or newer in the 24.x line and an application created in the Discord Developer Portal. The bot requests only the Guilds intent by default; configuration inspection does not require privileged intents. Optional member and message capabilities stay disabled unless a feature requires them and you explicitly opt in with `DISCORD_ENABLE_GUILD_MEMBERS_INTENT=true` or `DISCORD_ENABLE_MESSAGE_CONTENT_INTENT=true`. Enable the matching privileged intent on the application's **Bot → Privileged Gateway Intents** page before restarting. The bot must be a member of the test server and have **View Channel** in channels it should inspect.
 
+For YouTube music playback, install [yt-dlp](https://github.com/yt-dlp/yt-dlp#installation) with its default Python extras (`python -m pip install "yt-dlp[default]"`) and ensure both `yt-dlp` and Node.js are on `PATH`. The default extras include YouTube's JavaScript challenge support; Node.js is used as its JavaScript runtime.
+
 To try a pull request against a safe Discord test server, follow [the testing guide](docs/testing.md). Pull requests include a runnable tryout section, and GitHub Actions checks formatting, types, and the production build without Discord credentials.
 
 For the in-repository read-only command-module contract and a complete example, see [the feature module guide](docs/modules.md).
@@ -20,6 +22,8 @@ For the in-repository read-only command-module contract and a complete example, 
 `/ask` accepts a channel, a member, or both. A member-only question uses a fresh role and permission read without requiring a saved channel snapshot. Recent-message questions require an explicit server-admin opt-in for each source channel, Message Content Intent, current requester and bot history access, and `/ask include_messages:true`. `/summarize channel:#bots` uses the same opt-in, limits, and access checks, then returns a private summary with validated links to its supporting messages. Retrieval is limited to 1–7 days and 1–50 messages per request; message text is fetched on demand and is not stored by the bot. With the default mock provider, it is not sent to a hosted service and summaries are labeled as test output. Review [provider data handling](docs/ai-providers.md) before selecting a hosted provider, and follow [the testing guide](docs/testing.md) for setup and permission details.
 
 The optional [guild crafter registry](docs/crafting-registry.md) lets members look up registered recipe crafters with normal text questions in one configured channel. It requires Message Content Intent and an admin-selected Wowhead game database and crafter role.
+
+The `/music` command lets any server member queue a direct YouTube video URL with `/music play`, inspect the queue, skip, stop, or make the bot leave voice. The bot joins the requester's voice channel and needs Connect and Speak there. Server managers can set, show, or clear the music update channel with `/music channel set`, `/music channel show`, and `/music channel clear`; the bot needs View Channel and Send Messages in the selected channel. Playlists, searches, live streams, and videos longer than four hours are not supported. The music queue is held in memory and clears when the bot restarts.
 
 Build the production JavaScript with `npm run build`; run it with `npm start`.
 

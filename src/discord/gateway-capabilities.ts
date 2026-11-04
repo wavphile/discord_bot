@@ -3,6 +3,7 @@ import { GatewayIntentBits } from "discord.js";
 export type GatewayCapabilities = Readonly<{
   guildMembers: boolean;
   messageContent: boolean;
+  voiceStates?: boolean;
 }>;
 
 export type GatewayCapability = keyof GatewayCapabilities;
@@ -18,6 +19,8 @@ export function createGatewayIntents(
       GatewayIntentBits.MessageContent,
     );
   }
+  if (capabilities.voiceStates)
+    intents.push(GatewayIntentBits.GuildVoiceStates);
   return intents;
 }
 
