@@ -1,6 +1,7 @@
 import {
   AudioPlayerStatus,
   NoSubscriberBehavior,
+  StreamType,
   VoiceConnectionStatus,
   createAudioPlayer,
   createAudioResource,
@@ -20,7 +21,8 @@ import {
   type GuildTextBasedChannel,
 } from "discord.js";
 import type { DatabaseSync } from "node:sqlite";
-import * as play from "play-dl";
+import { spawn, type ChildProcessByStdio } from "node:child_process";
+import type { Readable } from "node:stream";
 import {
   getGuildSetting,
   setGuildSetting,
@@ -34,7 +36,7 @@ type GuildQueue = {
   connection?: VoiceConnection;
   textChannelId: string;
   starting: boolean;
-  generation: number;
+  audioProcess?: ChildProcessByStdio<null, Readable, Readable>;
   client: Client;
   database: DatabaseSync;
 };
@@ -45,8 +47,8 @@ const maximumQueueSize = 50;
 
 export function stopMusicPlayback(): void {
   for (const queue of queues.values()) {
-    queue.generation += 1;
     queue.tracks.length = 0;
+    queue.audioProcess?.kill();
     queue.player.stop(true);
     queue.connection?.destroy();
   }
@@ -207,7 +209,7 @@ export async function executeMusicCommand(
       return;
     }
     const url = interaction.options.getString("url", true).trim();
-    if (play.yt_validate(url) !== "video") {
+    if (!isYouTubeVideoUrl(url)) {
       await interaction.reply({
         content:
           "Provide a direct YouTube video URL. Playlists and search terms are not supported.",
@@ -216,13 +218,18 @@ export async function executeMusicCommand(
       return;
     }
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-    const details = await play.video_basic_info(url);
-    const video = details.video_details;
-    if (
-      video.live ||
-      video.durationInSec <= 0 ||
-      video.durationInSec > 14_400
-    ) {
+    let video: YouTubeVideoInfo;
+    try {
+      video = await getYouTubeVideoInfo(url);
+    } catch (error) {
+      await interaction.editReply(
+        error instanceof Error
+          ? error.message
+          : "Could not read this YouTube video.",
+      );
+      return;
+    }
+    if (video.isLive || video.duration <= 0 || video.duration > 14_400) {
       await interaction.editReply(
         "This video is live, unavailable, or longer than the 4-hour limit.",
       );
@@ -235,8 +242,8 @@ export async function executeMusicCommand(
       return;
     }
     const track: Track = {
-      url: video.url,
-      title: video.title ?? "YouTube video",
+      url,
+      title: video.title,
       requestedBy: interaction.user.id,
     };
     const guildQueue =
@@ -345,8 +352,9 @@ export async function executeMusicCommand(
     return;
   }
   if (subcommand === "skip") {
-    queue.generation += 1;
     delete queue.current;
+    queue.audioProcess?.kill();
+    delete queue.audioProcess;
     queue.player.stop(true);
     await interaction.reply({
       content: "Skipped the current video.",
@@ -361,9 +369,10 @@ export async function executeMusicCommand(
     );
     return;
   }
-  queue.generation += 1;
   delete queue.current;
   queue.tracks.length = 0;
+  queue.audioProcess?.kill();
+  delete queue.audioProcess;
   queue.player.stop(true);
   if (subcommand === "leave") {
     queue.connection.destroy();
@@ -418,7 +427,6 @@ function createQueue(
     player,
     textChannelId,
     starting: false,
-    generation: 0,
     client,
     database,
   };
@@ -430,12 +438,52 @@ async function startNext(guildId: string): Promise<void> {
   if (!queue || !track || queue.starting) return;
   queue.starting = true;
   queue.current = track;
-  const generation = queue.generation;
   try {
-    const stream = await play.stream(track.url, { quality: 2 });
-    if (generation !== queue.generation) return;
+    const audioProcess = spawn(
+      "yt-dlp",
+      [
+        ...commonYoutubeDlArgs,
+        "--format",
+        "bestaudio[acodec=opus]",
+        "--output",
+        "-",
+        "--",
+        track.url,
+      ],
+      { stdio: ["ignore", "pipe", "pipe"], windowsHide: true },
+    );
+    queue.audioProcess = audioProcess;
+    audioProcess.stderr.resume();
+    audioProcess.once("error", () => {
+      if (queue.audioProcess === audioProcess) {
+        delete queue.audioProcess;
+        queue.player.stop(true);
+        void announce(
+          queue.client,
+          queue.database,
+          guildId,
+          queue.textChannelId,
+          "Could not start yt-dlp. Install yt-dlp with YouTube JavaScript support and make sure it is on PATH.",
+        );
+      }
+    });
+    audioProcess.once("close", (code) => {
+      if (queue.audioProcess === audioProcess) delete queue.audioProcess;
+      if (code !== 0 && queue.player.state.status !== AudioPlayerStatus.Idle) {
+        queue.player.stop(true);
+        void announce(
+          queue.client,
+          queue.database,
+          guildId,
+          queue.textChannelId,
+          `Could not play **${track.title}**. YouTube could not provide an Opus audio stream.`,
+        );
+      }
+    });
     queue.player.play(
-      createAudioResource(stream.stream, { inputType: stream.type }),
+      createAudioResource(audioProcess.stdout, {
+        inputType: StreamType.WebmOpus,
+      }),
     );
     await announce(
       queue.client,
@@ -461,6 +509,117 @@ async function startNext(guildId: string): Promise<void> {
       void startNext(guildId);
     }
   }
+}
+
+type YouTubeVideoInfo = Readonly<{
+  title: string;
+  duration: number;
+  isLive: boolean;
+}>;
+
+const commonYoutubeDlArgs = [
+  "--no-config",
+  "--no-warnings",
+  "--quiet",
+  "--no-progress",
+  "--socket-timeout",
+  "20",
+  "--retries",
+  "1",
+  "--extractor-retries",
+  "1",
+  "--js-runtimes",
+  "node",
+  "--no-playlist",
+] as const;
+
+export function isYouTubeVideoUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "https:") return false;
+    const hostname = url.hostname.toLowerCase();
+    return (
+      ((hostname === "youtube.com" || hostname.endsWith(".youtube.com")) &&
+        url.pathname === "/watch" &&
+        Boolean(url.searchParams.get("v"))) ||
+      ((hostname === "youtu.be" || hostname.endsWith(".youtu.be")) &&
+        url.pathname.length > 1)
+    );
+  } catch {
+    return false;
+  }
+}
+
+function getYouTubeVideoInfo(url: string): Promise<YouTubeVideoInfo> {
+  return new Promise((resolve, reject) => {
+    const infoProcess = spawn(
+      "yt-dlp",
+      [
+        ...commonYoutubeDlArgs,
+        "--format",
+        "bestaudio[acodec=opus]",
+        "--dump-single-json",
+        "--",
+        url,
+      ],
+      { stdio: ["ignore", "pipe", "ignore"], windowsHide: true },
+    );
+    let output = "";
+    const timeout = setTimeout(() => {
+      infoProcess.kill();
+      reject(new Error("YouTube video lookup timed out. Please try again."));
+    }, 60_000);
+    infoProcess.stdout.setEncoding("utf8");
+    infoProcess.stdout.on("data", (chunk: string) => {
+      output += chunk;
+      if (output.length > 2_000_000) {
+        infoProcess.kill();
+        clearTimeout(timeout);
+        reject(new Error("YouTube returned too much video metadata."));
+      }
+    });
+    infoProcess.once("error", (error) => {
+      clearTimeout(timeout);
+      reject(
+        error.message.includes("ENOENT")
+          ? new Error(
+              "yt-dlp is required for YouTube playback. Install yt-dlp with YouTube JavaScript support and make sure it is on PATH.",
+            )
+          : new Error("Could not start YouTube video lookup."),
+      );
+    });
+    infoProcess.once("close", (code) => {
+      clearTimeout(timeout);
+      if (code !== 0) {
+        reject(
+          new Error(
+            "Could not read this YouTube video. Check the URL and try another video.",
+          ),
+        );
+        return;
+      }
+      try {
+        const metadata = JSON.parse(output) as {
+          title?: unknown;
+          duration?: unknown;
+          is_live?: unknown;
+        };
+        if (
+          typeof metadata.title !== "string" ||
+          typeof metadata.duration !== "number"
+        ) {
+          throw new Error("Video metadata is incomplete.");
+        }
+        resolve({
+          title: metadata.title,
+          duration: metadata.duration,
+          isLive: metadata.is_live === true,
+        });
+      } catch {
+        reject(new Error("Could not read this YouTube video's metadata."));
+      }
+    });
+  });
 }
 
 async function announce(
